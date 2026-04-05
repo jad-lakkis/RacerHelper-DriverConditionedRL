@@ -10,7 +10,7 @@
 #
 # IMPORTANT: After the game launches, check VNC.
 #   If there's a "Stay offline" popup, click it to dismiss.
-#   Training will begin automatically after that.
+#   Training will begin automatically after that. 
 # =============================================================
 
 set -euo pipefail
