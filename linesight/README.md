@@ -1401,4 +1401,250 @@ braking_aggression = 0.7  # switch to a more aggressive driver profile
 
 ---
 
+## 25. Risk Tolerance Conditioning
+
+**Files:** `config_files/config.py`, `config_files/state_normalization.py`, `trackmania_rl/tmi_interaction/game_instance_manager.py`, `trackmania_rl/buffer_management.py`, `trackmania_rl/multiprocess/learner_process.py`
+
+This section documents the risk tolerance system, which conditions the agent on a target driver risk profile and aligns the agent's racing line with that target using a VCP-distance Brier-score penalty.
+
+---
+
+### Motivation
+
+The Racer Helper project generates a **personalized ghost** that reflects a specific driver's style — not only a robot-optimal racing line. After braking aggression, another important driver-style dimension is **risk tolerance**: conservative drivers keep safer margins, while aggressive drivers take tighter cuts and operate closer to the limit.
+
+In this implementation, **risk is defined operationally through racing-line deviation**. The code uses the car's distance from the current VCP / reference line as the risk proxy:
+
+- small distance from the VCP / reference line → conservative line
+- large distance from the VCP / reference line → more aggressive line / tighter cut
+
+The target risk profile is controlled by:
+
+```python
+risk_tolerance ∈ [0, 1]
+```
+
+| Value | Interpretation |
+|---|---|
+| 0.0 | Maximally conservative — stays close to the VCP / reference line |
+| 0.5 | Neutral / balanced risk profile |
+| 1.0 | Maximally aggressive — larger deviation from the VCP / reference line |
+
+
+---
+
+### Part 1 — State Conditioning 
+
+**Mechanism:** `risk_tolerance` is appended to the float feature vector as index 185. It is a scalar in `[0, 1]`:
+
+| Value | Interpretation |
+|---|---|
+| 0.0 | Conservative profile — prefers smaller deviation from the VCP / reference line |
+| 0.5 | Neutral profile |
+| 1.0 | Aggressive profile — prefers larger deviation from the VCP / reference line |
+
+**Why concatenation works:** This follows the same conditioning idea used for `braking_aggression`. The network receives the requested driver profile as part of the state, so the same physical state can produce different Q-value distributions depending on the value of `risk_tolerance`.
+
+**Implementation:**
+
+```python
+# game_instance_manager.py — appended to the float feature vector
+config_copy.risk_tolerance      # index 185
+```
+
+**Normalization** (`state_normalization.py`):
+
+`risk_tolerance` is part of the float input vector and is handled through the float-input normalization system.
+
+---
+
+### Part 2 — CVaR Quantile Bias
+
+Risk tolerance is also used during distributional RL inference. At decision time, the IQN samples quantiles from a risk-conditioned range:
+
+```python
+τ ~ U[0.5 × risk_tolerance, 0.5 × risk_tolerance + 0.5]
+```
+
+This gives:
+
+| `risk_tolerance` | Quantile range | Interpretation |
+|---|---|---|
+| 0.0 | `τ ~ U[0.00, 0.50]` | Pessimistic / CVaR |
+| 0.5 | `τ ~ U[0.25, 0.75]` | Neutral / balanced |
+| 1.0 | `τ ~ U[0.50, 1.00]` | Optimistic / risk-seeking |
+
+A low `risk_tolerance` makes the agent evaluate actions using the lower part of the return distribution. This corresponds to a more pessimistic or conservative decision rule.
+
+A high `risk_tolerance` makes the agent evaluate actions using the upper part of the return distribution. This corresponds to a more optimistic or risk-seeking decision rule.
+
+This allows the same trained model to change its decision style without training a separate model for every risk profile.
+
+---
+
+### Part 3 — VCP-Distance Brier-Score Reward
+
+The reward term defines risk using the distance to the current VCP. In `buffer_management.py`, the code computes:
+
+```python
+_dist_to_vcp = np.linalg.norm(rollout_results["state_float"][i][62:65])
+_dist_normalized = min(_dist_to_vcp / config_copy.risk_tolerance_vcp_dist_max, 1.0)
+```
+
+So the raw VCP distance is converted into a normalized risk proxy:
+
+```python
+risk_proxy = min(||state_float[62:65]|| / risk_tolerance_vcp_dist_max, 1.0)
+```
+
+where:
+
+| Value | Interpretation |
+|---|---|
+| `risk_proxy ≈ 0` | The car is close to the VCP / reference line |
+| `risk_proxy ≈ 1` | The car is near `risk_tolerance_vcp_dist_max` metres from the VCP |
+
+The reward penalty is:
+
+```python
+r_risk(i) = coeff × (risk_proxy − risk_tolerance)²
+```
+
+where `coeff` is given by:
+
+```python
+humanlike_risk_tolerance_reward_schedule
+```
+
+Since the coefficient is negative, this term is a penalty. The penalty is minimized when:
+
+```python
+risk_proxy ≈ risk_tolerance
+```
+
+This means the reward pushes the agent's racing-line deviation toward the requested risk level.
+
+With the current configuration:
+
+```python
+risk_tolerance_vcp_dist_max = 15.0
+```
+
+the mapping is:
+
+| Distance from VCP | Normalized risk proxy |
+|---|---|
+| 0 m | `0.0` |
+| 7.5 m | `0.5` |
+| 15.0 m | `1.0` |
+| >15.0 m | `1.0` after clipping |
+
+Examples:
+
+| `risk_tolerance` | Minimum penalty occurs when | Interpretation |
+|---|---|---|
+| 0.0 | `risk_proxy ≈ 0.0` | Stay close to the VCP / reference line |
+| 0.5 | `risk_proxy ≈ 0.5` | Middle-risk line, around 7.5 m with the current normalization |
+| 1.0 | `risk_proxy ≈ 1.0` | Larger deviation from the VCP / reference line |
+
+---
+
+### Part 4 — Why this defines risk
+
+In this code, **risk is defined as normalized deviation from the VCP / reference line**:
+
+```python
+risk_proxy = min(||state_float[62:65]|| / risk_tolerance_vcp_dist_max, 1.0)
+```
+
+Therefore, `risk_tolerance` is not directly a speed variable, braking variable, or crash-probability variable. It is a target value for how far from the VCP / reference line the agent should drive.
+
+So the driver-style variables are separated as follows:
+
+- `braking_aggression` controls brake usage frequency.
+- `risk_tolerance` controls racing-line deviation from the VCP / reference line.
+- The human-likeness penalties prevent inhuman simulator exploits.
+
+---
+
+### Part 5 — Connection to the IQN Loss
+
+The risk tolerance penalty is incorporated into the reward, not by changing the IQN loss function form.
+
+The total reward becomes:
+
+```python
+r_total = r_base + r_engineered + r_humanlike + r_brake + r_risk
+```
+
+The IQN loss remains the same distributional Bellman-learning objective, but the Bellman target now contains the risk-alignment reward term. As a result, actions that match the requested risk tolerance receive better targets than actions that deviate from it.
+
+The risk tolerance input also lets the network distinguish between different desired risk profiles. The same physical state can therefore produce different Q-values depending on whether the requested profile is conservative, neutral, or aggressive.
+
+---
+
+### Configuration
+
+**`config.py` keys:**
+
+```python
+risk_tolerance = 0.5
+# Target driver risk level in [0, 1].
+# 0.0 = conservative, 0.5 = neutral, 1.0 = aggressive.
+
+humanlike_risk_tolerance_reward_schedule = [(0, -0.05)]
+# Schedule format: [(step, coefficient), ...] — linear interpolation.
+# Coefficient is negative, so this is a penalty.
+
+risk_tolerance_vcp_dist_max = 15.0
+# Distance normalization denominator for the VCP-distance risk proxy.
+# A distance of 15 m maps to risk_proxy = 1.0.
+# Distances larger than 15 m are clipped to 1.0.
+```
+
+**Ramp-in schedule:**
+
+```python
+humanlike_risk_tolerance_reward_schedule = [(0, 0), (500_000, -0.05)]
+```
+
+**Disable the reward penalty entirely:**
+
+```python
+humanlike_risk_tolerance_reward_schedule = [(0, 0)]
+```
+
+**Change driver profile at mid-run (edit `config_copy.py`):**
+
+```python
+risk_tolerance = 0.8  # switch to a more aggressive risk profile
+```
+
+---
+
+### Relationship to existing penalties
+
+| Penalty / mechanism | What it targets | Interaction with risk tolerance |
+|---|---|---|
+| `humanlike_oscillation_penalty` | Rapid L↔R steering flips | Orthogonal — input-frequency constraint, not racing-line risk |
+| `humanlike_brake_tap_penalty` | Brake presses shorter than 150 ms | Orthogonal — brake-duration constraint, not racing-line risk |
+| `humanlike_low_speed_slide_penalty` | Sliding at speed < 36 km/h | Orthogonal — prevents low-speed slide exploits |
+| `humanlike_braking_aggression_reward` | Brake usage frequency | Separate style dimension; controls braking behaviour |
+| `humanlike_risk_tolerance_reward` | Normalized distance from VCP / reference line | Directly aligns the racing line with the requested risk profile |
+| CVaR quantile bias | IQN quantile range at inference time | Changes pessimistic/optimistic action evaluation based on `risk_tolerance` |
+
+---
+
+### Design notes
+
+- **Why define risk using distance to the VCP?** The implementation needs a measurable proxy for racing-line aggressiveness. The chosen proxy is the distance from the current VCP / reference line. A small distance is treated as conservative; a larger distance is treated as more aggressive.
+
+- **Why use `risk_tolerance_vcp_dist_max`?** The raw VCP distance is measured in metres, but the reward formula needs a value in `[0, 1]`. The distance is therefore divided by `risk_tolerance_vcp_dist_max` and clipped at `1.0`.
+
+- **Why use a Brier-score penalty?** The reward uses a squared-deviation form, `(risk_proxy − risk_tolerance)²`, to directly penalize mismatch between the observed line-risk proxy and the requested risk profile. Since the coefficient is negative, the penalty is smallest when the normalized VCP distance matches `risk_tolerance`.
+
+- **Why is the coefficient `−0.05`?** The maximum per-step penalty is `|coeff|`. With `coeff = −0.05`, the maximum risk-alignment penalty has the same scale as the other human-likeness and style-alignment coefficients.
+
+- **Why keep risk tolerance separate from braking aggression?** `braking_aggression` controls how often the agent is encouraged to brake. `risk_tolerance` controls how far from the VCP / reference line the agent is encouraged to drive. They represent two different driver-style dimensions and are implemented as separate conditioning variables and separate reward terms.
+
 *Generated from source — covers every module, class, function, and design decision in the Linesight codebase.*
