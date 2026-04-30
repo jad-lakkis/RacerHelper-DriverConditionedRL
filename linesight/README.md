@@ -527,7 +527,7 @@ These are annealed via linear schedules and intended for curriculum purposes:
 | `engineered_speedslide_reward` | All 4 wheels grounded | Reward perfect speedslide quality (= 1.0 from Tomashu's formula) |
 | `engineered_neoslide_reward` | Lateral speed ≥ 2 m/s | Reward any lateral sliding |
 | `engineered_kamikaze_reward` | Action ≤ 2 OR ≤1 wheel grounded | Reward risky maneuvers |
-| `engineered_close_to_vcp_reward` | Always | Reward staying close to the next VCP |
+| `engineered_close_to_vcp_reward` | Always | Linear penalty `coeff × clip(dist, 2 m, 25 m)` for distance to current VCP. With `coeff = −0.002`: no signal within 2 m (dead zone accepts small deviations), −0.046 at 25 m. Soft preference — easily cancelled by a good speedslide or extra progress, so beneficial deviations remain net positive. |
 
 ### Reward potential shaping
 At collation time, the reward is augmented with potential-based shaping (Ng et al., 1999):
