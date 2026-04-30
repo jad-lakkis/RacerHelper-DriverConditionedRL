@@ -77,7 +77,7 @@ engineered_kamikaze_reward_schedule = [
     (0, 0),
 ]
 engineered_close_to_vcp_reward_schedule = [
-    (0, 0),
+    (0, -0.002),
 ]
 
 # -----------------------------------------------------------------------
@@ -290,7 +290,7 @@ final_speed_reward_per_m_per_s = reward_per_m_advanced_along_centerline * final_
 shaped_reward_dist_to_cur_vcp = -0.1
 shaped_reward_min_dist_to_cur_vcp = 2
 shaped_reward_max_dist_to_cur_vcp = 25
-engineered_reward_min_dist_to_cur_vcp = 5
+engineered_reward_min_dist_to_cur_vcp = 2
 engineered_reward_max_dist_to_cur_vcp = 25
 shaped_reward_point_to_vcp_ahead = 0
 
