@@ -212,6 +212,7 @@ def learner_process_fn(
         iqn_k=config_copy.iqn_k,
         tau_epsilon_boltzmann=config_copy.tau_epsilon_boltzmann,
     )
+    inferer.risk_tolerance = config_copy.risk_tolerance
 
     while True:  # Trainer loop
         before_wait_time = time.perf_counter()
@@ -288,6 +289,12 @@ def learner_process_fn(
         )
         humanlike_low_speed_slide_penalty = utilities.from_linear_schedule(
             config_copy.humanlike_low_speed_slide_penalty_schedule, accumulated_stats["cumul_number_frames_played"]
+        )
+        humanlike_braking_aggression_reward = utilities.from_linear_schedule(
+            config_copy.humanlike_braking_aggression_reward_schedule, accumulated_stats["cumul_number_frames_played"]
+        )
+        humanlike_risk_tolerance_reward = utilities.from_linear_schedule(
+            config_copy.humanlike_risk_tolerance_reward_schedule, accumulated_stats["cumul_number_frames_played"]
         )
         gamma = utilities.from_linear_schedule(config_copy.gamma_schedule, accumulated_stats["cumul_number_frames_played"])
 
@@ -453,6 +460,10 @@ def learner_process_fn(
                 humanlike_oscillation_penalty,
                 humanlike_brake_tap_penalty,
                 humanlike_low_speed_slide_penalty,
+                humanlike_braking_aggression_reward,
+                config_copy.braking_aggression,
+                humanlike_risk_tolerance_reward,
+                config_copy.risk_tolerance,
             )
 
             accumulated_stats["cumul_number_memories_generated"] += number_memories_added_train + number_memories_added_test

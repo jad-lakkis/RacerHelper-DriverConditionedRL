@@ -191,6 +191,8 @@ float_inputs_mean = np.array(
         # ==================== END   40 CP =====================
         700,  # margin_to_announce_finish_meters
         0,  # is_freewheeling
+        0.5,  # braking_aggression target [0, 1]
+        0.5,  # risk_tolerance [0, 1]
     ]
 )
 
@@ -384,5 +386,7 @@ float_inputs_std = np.array(
         # ==================== END   40 CP =====================
         350,  # margin_to_announce_finish_meters / 2
         1,  # is_freewheeling
+        0.3,  # braking_aggression std (covers typical [0,1] driver range)
+        0.3,  # risk_tolerance std
     ]
 )

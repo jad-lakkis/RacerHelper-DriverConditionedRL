@@ -103,6 +103,7 @@ def collector_process_fn(
         inferer.epsilon_boltzmann = utilities.from_exponential_schedule(config_copy.epsilon_boltzmann_schedule, shared_steps.value)
         inferer.tau_epsilon_boltzmann = config_copy.tau_epsilon_boltzmann
         inferer.is_explo = is_explo
+        inferer.risk_tolerance = config_copy.risk_tolerance
 
         # ===============================================
         #   PLAY ONE ROUND

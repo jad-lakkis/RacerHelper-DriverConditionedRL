@@ -133,6 +133,32 @@ This baseline provides a clear non-ML comparison for:
 
 ---
 
+---
+
+## 10) Driver Braking Aggression Conditioning
+
+The system conditions the RL agent on a **braking aggression** scalar `α ∈ [0, 1]` representing the target driver's characteristic brake usage rate.
+
+### How it works
+
+| Component | Mechanism |
+|---|---|
+| **State input** | `α` is appended to the float feature vector (index 184). The network produces different Q-values for the same physical state depending on `α` — a Universal Value Function Approximator (UVFA) architecture. |
+| **Reward signal** | A **Brier-score penalty** is added at each step: `r = coeff × (brake_t − α)²`. The Brier score is the unique *proper scoring rule* for binary events — its expectation is minimised exactly when the agent's empirical brake frequency equals `α`. |
+| **Loss function** | The IQN quantile Huber loss is unchanged. The penalty flows through the Bellman targets: high-aggression profiles get higher target Q-values for brake actions; low-aggression profiles penalise unnecessary braking. |
+
+### Configuration
+
+In `config_files/config.py`:
+```python
+braking_aggression = 0.3          # target driver braking frequency [0, 1]
+humanlike_braking_aggression_reward_schedule = [(0, -0.05)]
+```
+
+See §24 of the linesight README for the full mathematical derivation.
+
+---
+
 ## Team
 - Jad Al Lakkis  
 - Ibrahim Khaled

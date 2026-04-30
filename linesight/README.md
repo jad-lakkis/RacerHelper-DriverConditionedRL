@@ -32,6 +32,7 @@
 21. [Utilities & Helper Modules](#21-utilities--helper-modules)
 22. [File-by-File Reference](#22-file-by-file-reference)
 23. [Human-Likeness Penalties](#23-human-likeness-penalties)
+24. [Braking Aggression Conditioning](#24-braking-aggression-conditioning)
 
 ---
 
@@ -1226,6 +1227,177 @@ humanlike_oscillation_penalty_schedule    = [(0, 0)]
 ```
 
 To apply changes during a running training session, edit `config_copy.py` directly — changes take effect on the next rollout without restarting or clearing the replay buffer.
+
+---
+
+---
+
+## 24. Braking Aggression Conditioning
+
+**Files:** `config_files/config.py`, `trackmania_rl/tmi_interaction/game_instance_manager.py`, `trackmania_rl/buffer_management.py`, `trackmania_rl/multiprocess/learner_process.py`, `config_files/state_normalization.py`
+
+This section documents the braking aggression system, which conditions the agent on a target driver profile and aligns the agent's brake usage distribution to that target using a principled proper scoring rule.
+
+---
+
+### Motivation
+
+The Racer Helper project generates a **personalized ghost** that mimics a specific driver's style — not a robot-optimal line. One of the most driver-distinctive behaviours is braking aggression: aggressive drivers brake late and hard at every corner; smooth drivers coast and brake gently. The agent needs to:
+
+1. **Receive** the target aggression as a conditioning input, so a single trained model can produce different driving styles.
+2. **Be shaped** by a reward signal that pushes its empirical brake usage rate toward the target, without destroying the primary laptime objective.
+
+---
+
+### Part 1 — State Conditioning (UVFA)
+
+**Mechanism:** `braking_aggression` is appended to the float feature vector as the last element (index 184). It is a scalar in `[0, 1]`:
+
+| Value | Interpretation |
+|---|---|
+| 0.0 | Never brakes — pure coasting driver |
+| 0.3 | Brakes sparingly, mostly on fast corners (default) |
+| 0.5 | Moderate — brakes at most corners |
+| 1.0 | Brakes maximally at every braking opportunity |
+
+**Why concatenation works:** This is the **Universal Value Function Approximator (UVFA)** pattern (Schaul et al., 2015). The network learns to output different Q-value distributions for the same physical state depending on the conditioning variable. When `braking_aggression = 0.3`, the network avoids brake actions in situations where they would incur the Brier-score penalty; when `braking_aggression = 1.0`, it favours brake actions in those same situations.
+
+**Implementation:**
+
+```python
+# game_instance_manager.py — appended at construction time each step
+floats = np.hstack([
+    0,                                  # index 0  (overwritten by mini-race timer at collation)
+    previous_actions_features,          # indices 1–20
+    car_gear_and_wheels,                # indices 21–52
+    angular_velocity,                   # indices 53–55
+    linear_velocity,                    # indices 56–58
+    y_map_vector,                       # indices 59–61
+    zone_centers_in_car_frame,          # indices 62–181
+    margin_to_finish,                   # index 182
+    is_freewheeling,                    # index 183
+    config_copy.braking_aggression,     # index 184  ← NEW
+])
+```
+
+**Normalization** (`state_normalization.py`):
+- Mean: `0.5` (centre of `[0, 1]`)
+- Std: `0.3` (covers the realistic driver range with ≈ 1.7σ from each extreme)
+
+After normalization: `(braking_aggression − 0.5) / 0.3`, so a value of `0.5` maps to `0.0` (neutral), `0.0` maps to `−1.67`, and `1.0` maps to `+1.67`.
+
+---
+
+### Part 2 — Brier-Score Reward Penalty
+
+#### What is a proper scoring rule?
+
+A **proper scoring rule** for a binary event is a loss function `L(p, outcome)` such that its expected value (over the true outcome distribution) is minimised if and only if the reported probability `p` equals the true event probability. In other words, the agent is incentivised to report — or in our case, *produce* — the correct probability.
+
+The **Brier score** is the canonical proper scoring rule for binary events:
+
+```
+L_Brier(p, y) = (y − p)²
+```
+
+where `y ∈ {0, 1}` is the observed outcome and `p ∈ [0, 1]` is the predicted probability.
+
+Expected Brier score when the agent brakes with probability `f`:
+
+```
+E[L_Brier(α, brake)] = f × (1 − α)² + (1 − f) × (0 − α)²
+                     = f × (1 − α)² + (1 − f) × α²
+```
+
+Taking the derivative and setting to zero:
+
+```
+d/df = (1 − α)² − α² = 0
+     → f = α    (i.e., calibrated probability = target)
+```
+
+This confirms the proper scoring property: **the expected penalty is minimised exactly when `P(brake|state) = braking_aggression`**.
+
+#### Per-step reward formula
+
+At each non-terminal step `i`:
+
+```
+r_brake(i) = coeff × (brake(action_i) − braking_aggression)²
+```
+
+| Scenario | Penalty |
+|---|---|
+| `braking_aggression = 1.0`, agent brakes | `coeff × (1−1)² = 0` |
+| `braking_aggression = 1.0`, agent does not brake | `coeff × (0−1)² = coeff` |
+| `braking_aggression = 0.5`, agent brakes | `coeff × (1−0.5)² = 0.25 × coeff` |
+| `braking_aggression = 0.5`, agent does not brake | `coeff × (0−0.5)² = 0.25 × coeff` |
+| `braking_aggression = 0.0`, agent brakes | `coeff × (1−0)² = coeff` |
+| `braking_aggression = 0.0`, agent does not brake | `coeff × (0−0)² = 0` |
+
+With `coeff = −0.05`, the maximum penalty per step is `−0.05`, consistent with the other human-likeness coefficients.
+
+#### Connection to the IQN loss
+
+The braking aggression penalty is incorporated into the reward, not the loss function form. The IQN quantile Huber loss remains:
+
+```
+L_IQN = E_{τ,τ'}[ρ_τ(r_total + γ × Z_{τ'}(s', a*) − Z_τ(s, a))]
+```
+
+where `r_total` now includes `r_brake`. The distributional Bellman targets implicitly encode the braking-alignment objective across the full return distribution. High-aggression drivers get targets that assign higher Q-values to brake actions; low-aggression drivers get targets that penalise unnecessary braking. The network learns both simultaneously via the conditioning input.
+
+---
+
+### Configuration
+
+**`config.py` keys:**
+
+```python
+braking_aggression = 0.3
+# Float in [0, 1]. Set this to match the target driver's characteristic
+# brake usage rate. 0.3 is a reasonable default for a smooth but
+# competent driver who brakes at fast corners only.
+
+humanlike_braking_aggression_reward_schedule = [(0, -0.05)]
+# Schedule format: [(step, coefficient), ...] — linear interpolation.
+# Coefficient is negative (penalty). Maximum |coeff| = 0.05 is recommended
+# (matches other human-likeness penalties).
+```
+
+**Ramp-in schedule (recommended when training from scratch):**
+```python
+humanlike_braking_aggression_reward_schedule = [(0, 0), (500_000, -0.05)]
+```
+
+**Disable the penalty entirely (state conditioning remains active):**
+```python
+humanlike_braking_aggression_reward_schedule = [(0, 0)]
+```
+
+**Change driver profile at mid-run (edit `config_copy.py`):**
+```python
+braking_aggression = 0.7  # switch to a more aggressive driver profile
+```
+
+---
+
+### Relationship to existing penalties
+
+| Penalty | What it targets | Interaction with braking aggression |
+|---|---|---|
+| `humanlike_brake_tap_penalty` | Brake presses shorter than 150 ms | Orthogonal — tap detection enforces minimum hold duration; aggression shapes *frequency*, not *duration* |
+| `humanlike_low_speed_slide_penalty` | Sliding at speed < 36 km/h | No overlap — addresses sliding, not brake usage |
+| `humanlike_oscillation_penalty` | Steering L↔R flips | No overlap — addresses steering, not braking |
+| `engineered_speedslide_reward` | High-speed lateral sliding quality | No conflict — neither triggers at the same condition |
+
+---
+
+### Design notes
+
+- **Why Brier score rather than cross-entropy?** The Brier score is bounded (`[0, 1]`) and has bounded gradients, making it safer to incorporate into a reward without destabilising IQN training. Cross-entropy loss diverges as the predicted probability approaches 0 or 1, which would produce unbounded rewards.
+- **Why per-step rather than episode-level?** Episode-level reward (e.g. penalise total brake count deviation) provides a much weaker and more delayed signal. Per-step rewards propagate cleanly through the n-step return and allow the network to learn which *specific states* should trigger braking.
+- **Why does the conditioning input (index 184) survive collation?** `buffer_utilities.py` only overwrites index 0 (the mini-race timer). All other indices, including 184, pass through unchanged from the stored `state_float`. The network therefore always sees the correct `braking_aggression` value that was active during the rollout that generated that experience.
 
 ---
 

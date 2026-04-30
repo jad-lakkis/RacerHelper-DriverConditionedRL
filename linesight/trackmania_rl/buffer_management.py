@@ -45,6 +45,10 @@ def fill_buffer_from_rollout_with_n_steps_rule(
     humanlike_oscillation_penalty: float,
     humanlike_brake_tap_penalty: float,
     humanlike_low_speed_slide_penalty: float,
+    humanlike_braking_aggression_reward: float,
+    braking_aggression: float,
+    humanlike_risk_tolerance_reward: float,
+    risk_tolerance: float,
 ):
     assert len(rollout_results["frames"]) == len(rollout_results["current_zone_idx"])
     n_frames = len(rollout_results["frames"])
@@ -161,6 +165,31 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                 _speed_fwd = abs(float(rollout_results["state_float"][i][58]))
                 if _is_any_sliding and _speed_fwd < _LOW_SPEED_THRESHOLD:
                     reward_into[i] += humanlike_low_speed_slide_penalty
+
+            # Braking aggression alignment — Brier-score penalty:
+            #   r = coeff × (brake_t − α)²
+            # This is the unique proper scoring rule for binary events: its expected
+            # value is minimised exactly when P(brake|s) = braking_aggression.
+            # coeff is negative, so this is always a penalty, maximally -|coeff| when
+            # the agent's action is the polar opposite of the target (e.g. target=1
+            # but agent does not brake → deviation² = 1).
+            if humanlike_braking_aggression_reward != 0:
+                _is_braking = float(config_copy.inputs[int(rollout_results["actions"][i])]["brake"])
+                reward_into[i] += humanlike_braking_aggression_reward * (_is_braking - braking_aggression) ** 2
+
+            # Risk tolerance alignment — Brier-score penalty on VCP lateral deviation:
+            #   r = coeff × (dist_normalized − risk_tolerance)²
+            # where dist_normalized = clip(||state_float[62:65]|| / dist_max, 0, 1).
+            # dist_normalized ≈ 0: agent is on the centerline (conservative line).
+            # dist_normalized ≈ 1: agent is dist_max metres from VCP (aggressive cut).
+            # The Brier score drives dist_normalized → risk_tolerance at equilibrium:
+            #   - risk_tolerance=0 → penalise any deviation from centerline
+            #   - risk_tolerance=1 → penalise hugging the centerline (reward aggression)
+            #   - risk_tolerance=0.5 → minimum penalty at ~7.5 m lateral deviation
+            if humanlike_risk_tolerance_reward != 0:
+                _dist_to_vcp = np.linalg.norm(rollout_results["state_float"][i][62:65])
+                _dist_normalized = min(_dist_to_vcp / config_copy.risk_tolerance_vcp_dist_max, 1.0)
+                reward_into[i] += humanlike_risk_tolerance_reward * (_dist_normalized - risk_tolerance) ** 2
     for i in range(n_frames - 1):  # Loop over all frames that were generated
         # Switch memory buffer sometimes
         if random.random() < 0.1:

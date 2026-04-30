@@ -355,6 +355,7 @@ class Inferer:
         "epsilon_boltzmann",
         "tau_epsilon_boltzmann",
         "is_explo",
+        "risk_tolerance",
     )
 
     def __init__(self, inference_network, iqn_k, tau_epsilon_boltzmann):
@@ -364,18 +365,33 @@ class Inferer:
         self.epsilon_boltzmann = None
         self.tau_epsilon_boltzmann = tau_epsilon_boltzmann
         self.is_explo = None
+        self.risk_tolerance = 0.5  # neutral default; set from config before each rollout
 
     def infer_network(self, img_inputs_uint8: npt.NDArray, float_inputs: npt.NDArray, tau=None) -> npt.NDArray:
         """
         Perform inference of a single state through self.inference_network.
 
+        When tau is None (standard path), quantiles are sampled from a
+        risk-conditioned range derived from self.risk_tolerance:
+
+            τ ~ U[0.5 × risk_tolerance,  0.5 × risk_tolerance + 0.5]
+
+          risk_tolerance = 0.0  →  τ ~ U[0.00, 0.50]  pessimistic/CVaR
+          risk_tolerance = 0.5  →  τ ~ U[0.25, 0.75]  neutral (balanced)
+          risk_tolerance = 1.0  →  τ ~ U[0.50, 1.00]  optimistic/risk-seeking
+
+        This implements distributional risk-sensitivity without retraining: the
+        IQN return distribution is evaluated at a quantile window that reflects
+        the target driver's risk preference at every decision step.
+
         Args:
             img_inputs_uint8:   a numpy array of shape (1, H, W) and dtype np.uint8
             float_inputs:       a numpy array of shape (float_input_dim, ) and dtype np.float32
-            tau:                a torch.Tensor of shape (iqn_k,  1)
+            tau:                optional torch.Tensor of shape (iqn_k, 1); if provided,
+                                skips CVaR bias (used for fixed-tau analysis in learner)
 
         Returns:
-            q_values:           a numpy array of shape (iqn_k, 1)
+            q_values:           a numpy array of shape (iqn_k, n_actions)
         """
         with torch.no_grad():
             state_img_tensor = (
@@ -385,12 +401,20 @@ class Inferer:
                 - 128
             ) / 128
             state_float_tensor = torch.from_numpy(np.expand_dims(float_inputs, axis=0)).to("cuda", non_blocking=True)
+
+            # CVaR quantile bias: sample τ from the risk-conditioned window.
+            # Only applied when tau is not externally prescribed (standard inference path).
+            if tau is None:
+                tau_low = 0.5 * self.risk_tolerance
+                tau_high = tau_low + 0.5
+                tau = torch.linspace(tau_low, tau_high, self.iqn_k, device="cuda", dtype=torch.float32).unsqueeze(1)
+
             q_values = (
                 self.inference_network(
                     state_img_tensor,
                     state_float_tensor,
                     self.iqn_k,
-                    tau=tau,  # torch.linspace(0.05, 0.95, self.iqn_k, device="cuda")[:, None],
+                    tau=tau,
                 )[0]
                 .cpu()
                 .numpy()

@@ -91,7 +91,7 @@ engineered_close_to_vcp_reward_schedule = [
 #
 # Each penalty is set to -0.05 — roughly 1-1.5× the magnitude of one
 # step's net reward — strong enough to shape behaviour without
-# destabilising training.  See §23 of the README for full derivation.
+# destabilising training.  See §23 of the linesight README for full derivation.
 #
 # To disable a penalty during early training and ramp it in later use:
 #   humanlike_oscillation_penalty_schedule = [(0, 0), (500_000, -0.05)]
@@ -106,11 +106,94 @@ humanlike_low_speed_slide_penalty_schedule = [
     (0, -0.05),
 ]
 
+# -----------------------------------------------------------------------
+# Braking aggression conditioning
+# -----------------------------------------------------------------------
+# braking_aggression is a scalar in [0, 1] representing the target driver's
+# characteristic braking frequency: 0 = coasts everywhere, 1 = brakes
+# maximally at every opportunity.  It serves two roles simultaneously:
+#
+#   1. STATE CONDITIONING (UVFA): braking_aggression is appended to the
+#      float feature vector as the last element (index 184).  The network
+#      therefore produces distinct Q-values for each aggression profile,
+#      enabling a single trained model to simulate different driver styles.
+#
+#   2. BRIER-SCORE REWARD PENALTY: At every step, a per-step penalty
+#      proportional to the squared deviation between the chosen brake action
+#      and the target is added to the reward:
+#
+#        r_brake(a_t) = coeff × (brake(a_t) − braking_aggression)²
+#
+#      The Brier score is the unique proper scoring rule for binary events —
+#      its expectation over the policy is minimised exactly when the agent's
+#      empirical brake frequency converges to braking_aggression.  See §24
+#      of the linesight README for the full mathematical derivation.
+#
+#   Penalty calibration for coeff = -0.05:
+#     braking_aggression = 1.0:  brake → 0 penalty;  no-brake → -0.05
+#     braking_aggression = 0.5:  brake → -0.0125;    no-brake → -0.0125
+#     braking_aggression = 0.0:  brake → -0.05;      no-brake → 0 penalty
+#
+#   Maximum per-step penalty (-0.05) matches the other human-likeness
+#   coefficients and is ≈ 1× the magnitude of one step's net reward.
+# -----------------------------------------------------------------------
+braking_aggression = 0.3  # target driver braking frequency [0, 1]
+humanlike_braking_aggression_reward_schedule = [
+    (0, -0.05),
+]
+
+# -----------------------------------------------------------------------
+# Risk tolerance conditioning
+# -----------------------------------------------------------------------
+# risk_tolerance is a scalar in [0, 1] that encodes how close to the limit
+# a driver operates: 0 = maximally conservative (follows safe centerline,
+# maximum margins); 1 = maximally aggressive (tight apex cuts, higher
+# variance outcomes).  It conditions the agent through three mechanisms:
+#
+#   1. STATE CONDITIONING (UVFA): risk_tolerance is appended to the float
+#      feature vector as index 185, allowing one trained model to reproduce
+#      different driver risk profiles by changing this single scalar.
+#
+#   2. CVaR QUANTILE BIAS (distributional RL inference): at decision time,
+#      the IQN samples quantiles τ from a risk-conditioned range:
+#
+#        τ ~ U[0.5 × risk_tolerance, 0.5 × risk_tolerance + 0.5]
+#
+#      risk_tolerance = 0.0 → τ ~ U[0.00, 0.50]  (pessimistic/CVaR)
+#      risk_tolerance = 0.5 → τ ~ U[0.25, 0.75]  (neutral/balanced)
+#      risk_tolerance = 1.0 → τ ~ U[0.50, 1.00]  (optimistic/risk-seeking)
+#
+#      This is the proper distributional RL mechanism for risk sensitivity:
+#      the agent selects actions that are best in the pessimistic (or
+#      optimistic) part of the return distribution, without retraining.
+#
+#   3. VCP DISTANCE BRIER-SCORE REWARD: the agent's lateral deviation from
+#      the track centerline (distance to current VCP) is used as a risk
+#      proxy.  The Brier-score penalty aligns the agent's line choice with
+#      the target tolerance:
+#
+#        r_risk(i) = coeff × (||dist_to_vcp|| / dist_max − risk_tolerance)²
+#
+#      Low tolerance → penalise deviating from centerline (safe line)
+#      High tolerance → penalise staying on centerline (cut corners)
+#      Maximum penalty per step: |coeff|, consistent with other penalties.
+#      See §25 of the linesight README for full derivation.
+#
+#   risk_tolerance_vcp_dist_max: the normalisation denominator for the VCP
+#   distance in the Brier-score formula (in metres).  Set to approximately
+#   half the track width so that fully cutting an apex maps to dist_norm≈1.
+# -----------------------------------------------------------------------
+risk_tolerance = 0.5  # target driver risk level [0, 1]; 0.5 = neutral
+humanlike_risk_tolerance_reward_schedule = [
+    (0, -0.05),
+]
+risk_tolerance_vcp_dist_max = 15.0  # metres; normalisation for VCP distance
+
 n_steps = 3
 constant_reward_per_ms = -6 / 5000
 reward_per_m_advanced_along_centerline = 5 / 500
 
-float_input_dim = 27 + 3 * n_zone_centers_in_inputs + 4 * n_prev_actions_in_inputs + 4 * n_contact_material_physics_behavior_types + 1
+float_input_dim = 27 + 3 * n_zone_centers_in_inputs + 4 * n_prev_actions_in_inputs + 4 * n_contact_material_physics_behavior_types + 3
 float_hidden_dim = 256
 conv_head_output_dim = 5632
 dense_hidden_dimension = 1024
