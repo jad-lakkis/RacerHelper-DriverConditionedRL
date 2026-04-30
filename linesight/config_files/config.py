@@ -137,7 +137,7 @@ humanlike_low_speed_slide_penalty_schedule = [
 #   Maximum per-step penalty (-0.05) matches the other human-likeness
 #   coefficients and is ≈ 1× the magnitude of one step's net reward.
 # -----------------------------------------------------------------------
-braking_aggression = 0.3  # target driver braking frequency [0, 1]
+braking_aggression = 0.8  # target driver braking frequency [0, 1]
 humanlike_braking_aggression_reward_schedule = [
     (0, -0.05),
 ]
