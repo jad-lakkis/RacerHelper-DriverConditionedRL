@@ -31,6 +31,7 @@
 20. [TensorBoard Metrics](#20-tensorboard-metrics)
 21. [Utilities & Helper Modules](#21-utilities--helper-modules)
 22. [File-by-File Reference](#22-file-by-file-reference)
+23. [Human-Likeness Penalties](#23-human-likeness-penalties)
 
 ---
 
@@ -1053,6 +1054,178 @@ Dictionary of known author and gold medal times per map name, used to compute `e
 | `maps/*.npy` | **Track data** | Pre-computed VCP centerline arrays |
 | `save/` | **Persistence** | Weights, optimizer state, stats |
 | `tensorboard/` | **Monitoring** | TensorBoard event files |
+
+---
+
+---
+
+## 23. Human-Likeness Penalties
+
+**Files:** `trackmania_rl/buffer_management.py`, `config_files/config.py`, `trackmania_rl/multiprocess/learner_process.py`
+
+This section documents the three penalty terms added to the reward function to discourage behaviours that are physically possible in the simulator but impossible or unnatural for a human driver. The goal is not to make the agent slower — it is to constrain the **policy space** to solutions that a human could realistically execute, which is a prerequisite for using the agent as a driver assistance or coaching tool.
+
+---
+
+### Reward scale reference
+
+Every design decision below is anchored to the base reward scale. At a typical racing speed of ~100 km/h:
+
+| Component | Value per 50 ms step |
+|---|---|
+| Time penalty (`constant_reward_per_ms × 50`) | **−0.060** |
+| Progress reward (~1.4 m at 100 km/h) | **+0.014** |
+| Net reward per step at racing speed | **≈ −0.032 to −0.046** |
+
+A penalty has to be in this ballpark to matter. Too small and the agent ignores it; too large and it destabilises learning by dominating the gradient signal.
+
+The chosen coefficient for **all three penalties is −0.05**, which is approximately **1.0–1.5× the magnitude of one step's net reward**. This is the standard RL engineering rule of thumb for auxiliary penalties: large enough to shape behaviour, small enough not to destroy the primary signal.
+
+---
+
+### Penalty 1 — Steering oscillation
+
+**Config key:** `humanlike_oscillation_penalty_schedule`  
+**Default value:** `[(0, -0.05)]`
+
+#### What it penalises
+Rapid left↔right direction reversals. At 50 ms/step, a fully alternating L-R-L-R pattern produces a flip every step. Human minimum reaction time for a deliberate direction change is ~150–200 ms, making single-step reversals physiologically impossible.
+
+#### Detection
+A **prefix-sum sliding window** approach over the rollout:
+
+1. A pre-pass scans every action and marks `flip_at_step[k] = 1` whenever action `k` had the **opposite** non-neutral steering direction from the previous non-neutral action (i.e. a direct L→R or R→L; neutral steps are ignored).
+2. A prefix sum `flip_cumsum` is built so that the number of flips in any window `[i-W, i-1]` can be queried in O(1) as `flip_cumsum[i] - flip_cumsum[i-W]`.
+
+#### Penalty formula
+```
+penalty(i) = humanlike_oscillation_penalty × max(0, flips_in_window − 1)
+```
+
+Window size `W = 4` steps = **200 ms**.
+
+The `max(0, flips − 1)` shape gives **one free flip per 200 ms window** — a single direction change is a normal cornering correction and must not be penalised. Every flip beyond the first is an extra unit of penalty:
+
+| Flips in 200 ms window | Multiplier | Effective penalty | Interpretation |
+|---|---|---|---|
+| 0 or 1 | 0 | 0.00 | Normal driving |
+| 2 | 1 | −0.05 | L→R→L in ~150 ms — borderline |
+| 3 | 2 | −0.10 | L→R→L→R in 200 ms — clearly inhuman |
+| 4 | 3 | −0.15 | Maximum possible tapping rate |
+
+At the maximum tapping frequency (4 flips, −0.15/step), the penalty is **3.3× the magnitude of the net progress reward**, producing a very strong gradient signal away from this behaviour.
+
+#### Why −0.05 specifically
+The physics gain from steering oscillation (exploiting the suspension/friction model) is empirically at most a 5–15% speed increase, translating to roughly +0.002 to +0.004 extra reward per step. At 2 flips, the penalty of −0.05 already outweighs this by 12–25×. The coefficient is conservative enough that **one natural cornering correction never triggers a penalty**, while still making rapid tapping clearly unprofitable.
+
+---
+
+### Penalty 2 — Brake tap (minimum hold duration)
+
+**Config key:** `humanlike_brake_tap_penalty_schedule`  
+**Default value:** `[(0, -0.05)]`
+
+#### What it penalises
+Brake presses held for fewer than **3 consecutive steps (150 ms)**. The minimum deliberate braking duration for a human is ~150–200 ms (one conscious press-and-hold cycle). Any braking event shorter than this is a micro-tap that the simulator responds to but no human could reproduce intentionally.
+
+#### Detection
+A forward-scan pre-pass:
+
+1. Tracks `brake_hold` — a running counter of consecutive steps with brake active.
+2. The moment brake turns off, if `0 < brake_hold < 3`, the release step is tagged in `brake_tap_penalty_at[idx]`.
+3. In the main reward loop, `reward_into[idx] += brake_tap_penalty_at[idx]`.
+
+This is an **event penalty** (one hit per tap occurrence), not a per-step penalty. Via the n-step return (n=3), it propagates backwards approximately 3 steps, so:
+
+```
+total effective signal ≈ −0.05 × (1 + γ + γ²) ≈ −0.15
+```
+
+which is comparable to the total reward of 3 normal steps. The agent strongly associates the entire short-brake sequence with a penalty, not just the release step.
+
+#### Why 3 steps (150 ms) as the threshold
+At 50 ms/step, the resolution is too coarse to distinguish a 10 ms tap from a 50 ms tap — both appear as 1 step. The threshold of 3 steps is chosen to match the lower bound of human deliberate braking (150 ms), accepting that 1–2 step braking (50–100 ms) is either an accident or an AI exploit. Raising this threshold (e.g. to 4 steps = 200 ms) would be more conservative; lowering it to 2 steps would allow 50 ms taps through unchecked.
+
+#### Why −0.05 specifically
+A short brake tap in TM can improve corner positioning by avoiding scrubbing. The benefit is at most ~0.005–0.02 reward per transition. The event penalty of −0.05 (which propagates to a total of ~−0.15 across 3 experiences) outweighs this by 7–30×, making micro-tapping clearly suboptimal.
+
+---
+
+### Penalty 3 — Neo slide at low speed
+
+**Config key:** `humanlike_low_speed_slide_penalty_schedule`  
+**Default value:** `[(0, -0.05)]`
+
+#### What it penalises
+Any wheel in a sliding state while forward speed is below **10 m/s (36 km/h)**. At high speed, wheel sliding is a legitimate technique (speedslide) already handled by `engineered_neoslide_reward` and `engineered_speedslide_reward`. At low speed, sliding is an AI physics exploit — it occurs when the agent spins in place, recovers from a wall hit awkwardly, or exploits the start-of-race physics. No human driver intentionally produces sustained low-speed wheel slides.
+
+#### Detection
+Checked directly in the main reward loop per step using two `state_float` indices:
+
+| Index | Value |
+|---|---|
+| `state_float[21:25]` | `is_sliding` flag for each of the 4 wheels (float 0.0/1.0) |
+| `state_float[58]` | Forward speed in car reference frame (m/s) |
+
+```python
+if any(is_sliding) and abs(speed_forward) < 10.0:
+    reward_into[i] += humanlike_low_speed_slide_penalty
+```
+
+This is a **per-step penalty** — the longer the agent stays in this bad state, the more it accumulates. 10 steps of low-speed sliding (500 ms) = 10 × −0.05 = **−0.50**, which is roughly equivalent to losing 8 seconds of race time via the time penalty alone.
+
+#### Why 10 m/s (36 km/h) as the threshold
+This boundary cleanly separates two regimes:
+- **Below 10 m/s:** sliding is almost always non-intentional (spin-outs, start chaos, wall bouncing).
+- **Above 10 m/s:** sliding can be a deliberate speedslide. The existing `engineered_neoslide_reward` (lateral speed ≥ 2 m/s) and `engineered_speedslide_reward` (quality ≈ 1.0) already handle the high-speed sliding regime and should not be interfered with.
+
+#### Why −0.05 specifically
+At −0.05/step, low-speed sliding is penalised at **the same magnitude as one step's time penalty** (−0.06). Combined, the agent loses −0.11/step while sliding slowly — more than 2× the net reward magnitude at racing speed. The agent will strongly prefer escaping this state over staying in it. Choosing a value equal to the time penalty is principled: it says "sliding slowly is as bad as standing still", which is the correct relative assessment.
+
+---
+
+### Relationship to existing engineered rewards
+
+| Reward / Penalty | Trigger | Sign | Scale | Interaction |
+|---|---|---|---|---|
+| `engineered_neoslide_reward` | Lateral speed ≥ 2 m/s | Configurable (+/−) | Configurable | Rewards high-speed sliding — does **not** conflict with neo slide penalty because the speed threshold (36 km/h) separates them cleanly |
+| `engineered_speedslide_reward` | All 4 wheels grounded, quality ≈ 1.0 | Positive | Configurable | Rewards **perfect** high-speed slides — entirely orthogonal to the low-speed slide penalty |
+| `humanlike_low_speed_slide_penalty` | Any sliding wheel + speed < 36 km/h | Negative | −0.05/step | Fills the gap left by the above two — penalises the bad low-speed regime they ignore |
+| `engineered_kamikaze_reward` | Actions 0–2 OR ≤1 wheel grounded | Configurable | Configurable | Partially overlaps with low-speed slide (a spinning car often has few wheels grounded) but is conceptually distinct |
+| `humanlike_oscillation_penalty` | 2+ L↔R flips in 200 ms | Negative | −0.05 × (flips−1)/step | No overlap with any existing reward — addresses input frequency which none of the original rewards touch |
+| `humanlike_brake_tap_penalty` | Brake held < 150 ms | Negative | −0.05 per event | No overlap — addresses input duration which none of the original rewards touch |
+
+---
+
+### How to tune
+
+All three are exposed as linear schedules. The schedule format is `[(step, value), ...]` with linear interpolation between setpoints, keyed on `cumul_number_frames_played`.
+
+**Enable immediately (current default):**
+```python
+humanlike_oscillation_penalty_schedule    = [(0, -0.05)]
+humanlike_brake_tap_penalty_schedule      = [(0, -0.05)]
+humanlike_low_speed_slide_penalty_schedule = [(0, -0.05)]
+```
+
+**Ramp in after initial convergence (recommended for training from scratch):**
+```python
+humanlike_oscillation_penalty_schedule    = [(0, 0), (500_000, -0.05)]
+humanlike_brake_tap_penalty_schedule      = [(0, 0), (500_000, -0.05)]
+humanlike_low_speed_slide_penalty_schedule = [(0, 0), (500_000, -0.05)]
+```
+
+**Strengthen if behaviour persists after many training steps:**
+```python
+humanlike_oscillation_penalty_schedule    = [(0, 0), (500_000, -0.05), (3_000_000, -0.10)]
+```
+
+**Disable a penalty entirely:**
+```python
+humanlike_oscillation_penalty_schedule    = [(0, 0)]
+```
+
+To apply changes during a running training session, edit `config_copy.py` directly — changes take effect on the next rollout without restarting or clearing the replay buffer.
 
 ---
 
