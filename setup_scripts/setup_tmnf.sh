@@ -12,6 +12,9 @@
 # Use setup_linesight.sh (Script 2) for that.
 # =============================================================
 
+
+#PLEASE NOTE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!: 
+#SOMETIMES, THE SCRIPT FAILS, and you have to press CTRL+C and re run it , this happens on step 5 , and it happens only if youre running it for the first time!
 set -euo pipefail
 
 USERNAME="wineuser"
