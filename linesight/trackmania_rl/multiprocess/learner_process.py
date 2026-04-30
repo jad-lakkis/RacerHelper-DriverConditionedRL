@@ -280,6 +280,15 @@ def learner_process_fn(
         engineered_close_to_vcp_reward = utilities.from_linear_schedule(
             config_copy.engineered_close_to_vcp_reward_schedule, accumulated_stats["cumul_number_frames_played"]
         )
+        humanlike_oscillation_penalty = utilities.from_linear_schedule(
+            config_copy.humanlike_oscillation_penalty_schedule, accumulated_stats["cumul_number_frames_played"]
+        )
+        humanlike_brake_tap_penalty = utilities.from_linear_schedule(
+            config_copy.humanlike_brake_tap_penalty_schedule, accumulated_stats["cumul_number_frames_played"]
+        )
+        humanlike_low_speed_slide_penalty = utilities.from_linear_schedule(
+            config_copy.humanlike_low_speed_slide_penalty_schedule, accumulated_stats["cumul_number_frames_played"]
+        )
         gamma = utilities.from_linear_schedule(config_copy.gamma_schedule, accumulated_stats["cumul_number_frames_played"])
 
         # ===============================================
@@ -441,6 +450,9 @@ def learner_process_fn(
                 engineered_neoslide_reward,
                 engineered_kamikaze_reward,
                 engineered_close_to_vcp_reward,
+                humanlike_oscillation_penalty,
+                humanlike_brake_tap_penalty,
+                humanlike_low_speed_slide_penalty,
             )
 
             accumulated_stats["cumul_number_memories_generated"] += number_memories_added_train + number_memories_added_test

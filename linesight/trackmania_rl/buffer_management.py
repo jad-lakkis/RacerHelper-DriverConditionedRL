@@ -42,6 +42,9 @@ def fill_buffer_from_rollout_with_n_steps_rule(
     engineered_neoslide_reward: float,
     engineered_kamikaze_reward: float,
     engineered_close_to_vcp_reward: float,
+    humanlike_oscillation_penalty: float,
+    humanlike_brake_tap_penalty: float,
+    humanlike_low_speed_slide_penalty: float,
 ):
     assert len(rollout_results["frames"]) == len(rollout_results["current_zone_idx"])
     n_frames = len(rollout_results["frames"])
@@ -57,6 +60,48 @@ def fill_buffer_from_rollout_with_n_steps_rule(
     )  # Discount factor that will be placed in front of next_step in Bellman equation, depending on n_steps chosen
 
     reward_into = np.zeros(n_frames)
+
+    # =========================================================
+    # Human-likeness pre-passes (run before the main reward loop)
+    # =========================================================
+
+    # --- Brake tap penalty ---
+    # A brake press held for fewer than MIN_BRAKE_HOLD_STEPS consecutive steps (150 ms) is not
+    # human-like. We detect the moment of release and tag that slot; the penalty is then added
+    # inside the main loop below.
+    MIN_BRAKE_HOLD_STEPS = 3  # 150 ms at 50 ms/step
+    brake_tap_penalty_at = np.zeros(n_frames)
+    if humanlike_brake_tap_penalty != 0:
+        brake_hold = 0
+        for _idx in range(n_frames - 1):  # n_frames-1 excludes terminal nan frame
+            _a = config_copy.inputs[int(rollout_results["actions"][_idx])]
+            if _a["brake"]:
+                brake_hold += 1
+            else:
+                if 0 < brake_hold < MIN_BRAKE_HOLD_STEPS:
+                    # Release step: reward_into[_idx] corresponds to Experience _idx-1
+                    # (the last brake step) — tagging here attributes the penalty correctly
+                    brake_tap_penalty_at[_idx] = humanlike_brake_tap_penalty
+                brake_hold = 0
+
+    # --- Steering oscillation: prefix-sum of direction flips ---
+    # A direction flip is a direct left↔right change (ignoring neutral steps).
+    # We allow 1 flip per 200 ms window (natural cornering); every additional flip is penalised.
+    STEER_OSCILLATION_WINDOW = 4  # 200 ms at 50 ms/step
+    flip_cumsum = None
+    if humanlike_oscillation_penalty != 0:
+        flip_at_step = np.zeros(n_frames)
+        last_nonzero_dir = 0
+        for _idx in range(n_frames - 1):
+            _a = config_copy.inputs[int(rollout_results["actions"][_idx])]
+            _d = 1 if _a["left"] else (-1 if _a["right"] else 0)
+            if _d != 0:
+                if last_nonzero_dir != 0 and _d != last_nonzero_dir:
+                    flip_at_step[_idx] = 1
+                last_nonzero_dir = _d
+        # Prepend a 0 so flip_cumsum[i] = sum(flip_at_step[0:i]), enabling O(1) window queries
+        flip_cumsum = np.concatenate([[0.0], np.cumsum(flip_at_step)])
+
     for i in range(1, n_frames):
         reward_into[i] += config_copy.constant_reward_per_ms * (
             config_copy.ms_per_action
@@ -95,6 +140,27 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                     config_copy.engineered_reward_min_dist_to_cur_vcp,
                     min(config_copy.engineered_reward_max_dist_to_cur_vcp, np.linalg.norm(rollout_results["state_float"][i][62:65])),
                 )
+
+            # ---- Human-likeness penalties ----
+
+            # Brake tap: short press detected in pre-pass; apply at the release step
+            if humanlike_brake_tap_penalty != 0:
+                reward_into[i] += brake_tap_penalty_at[i]
+
+            # Steering oscillation: penalise every extra L↔R flip beyond 1 per 200 ms window
+            # (1 flip = natural mid-corner correction; repeated flipping = inhuman tapping)
+            if humanlike_oscillation_penalty != 0:
+                window_flips = flip_cumsum[i] - flip_cumsum[max(0, i - STEER_OSCILLATION_WINDOW)]
+                reward_into[i] += humanlike_oscillation_penalty * max(0.0, float(window_flips) - 1.0)
+
+            # Neo slide at low speed: sliding wheels while forward speed < 36 km/h is an AI
+            # artefact that no human driver produces intentionally at low speed
+            if humanlike_low_speed_slide_penalty != 0:
+                _LOW_SPEED_THRESHOLD = 10.0  # m/s ≈ 36 km/h
+                _is_any_sliding = np.any(rollout_results["state_float"][i][21:25] > 0.5)
+                _speed_fwd = abs(float(rollout_results["state_float"][i][58]))
+                if _is_any_sliding and _speed_fwd < _LOW_SPEED_THRESHOLD:
+                    reward_into[i] += humanlike_low_speed_slide_penalty
     for i in range(n_frames - 1):  # Loop over all frames that were generated
         # Switch memory buffer sometimes
         if random.random() < 0.1:

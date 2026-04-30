@@ -80,6 +80,32 @@ engineered_close_to_vcp_reward_schedule = [
     (0, 0),
 ]
 
+# -----------------------------------------------------------------------
+# Human-likeness penalties
+# -----------------------------------------------------------------------
+# All three coefficients are negative (penalties).  They are calibrated
+# against the base reward scale:
+#   constant_reward_per_ms × 50 ms  =  -0.06  per step  (time cost)
+#   reward_per_m × ~1.4 m  (100 km/h)  = +0.014 per step  (progress)
+#   net per-step reward at racing speed ≈ -0.032 to -0.046
+#
+# Each penalty is set to -0.05 — roughly 1-1.5× the magnitude of one
+# step's net reward — strong enough to shape behaviour without
+# destabilising training.  See §23 of the README for full derivation.
+#
+# To disable a penalty during early training and ramp it in later use:
+#   humanlike_oscillation_penalty_schedule = [(0, 0), (500_000, -0.05)]
+# -----------------------------------------------------------------------
+humanlike_oscillation_penalty_schedule = [
+    (0, -0.05),
+]
+humanlike_brake_tap_penalty_schedule = [
+    (0, -0.05),
+]
+humanlike_low_speed_slide_penalty_schedule = [
+    (0, -0.05),
+]
+
 n_steps = 3
 constant_reward_per_ms = -6 / 5000
 reward_per_m_advanced_along_centerline = 5 / 500
