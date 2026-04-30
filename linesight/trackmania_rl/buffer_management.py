@@ -128,10 +128,15 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                     1 - abs(speedslide_quality_tarmac(rollout_results["state_float"][i][56], rollout_results["state_float"][i][58]) - 1),
                 )  # TODO : indices 25:29, 56 and 58 are hardcoded, this is bad....
 
-            # lateral speed is higher than 2 meters per second
+            # lateral speed >= 2 m/s AND forward speed >= 10 m/s (36 km/h):
+            # the forward-speed guard prevents overlap with humanlike_low_speed_slide_penalty,
+            # which fires at forward speed < 10 m/s — without it the two terms cancel or conflict.
             reward_into[i] += (
-                engineered_neoslide_reward if abs(rollout_results["state_float"][i][56]) >= 2.0 else 0
-            )  # TODO : 56 is hardcoded, this is bad....
+                engineered_neoslide_reward
+                if abs(rollout_results["state_float"][i][56]) >= 2.0
+                and abs(rollout_results["state_float"][i][58]) >= 10.0
+                else 0
+            )  # TODO : 56, 58 are hardcoded, this is bad....
             # kamikaze reward
             if (
                 engineered_kamikaze_reward != 0
@@ -190,6 +195,7 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                 _dist_to_vcp = np.linalg.norm(rollout_results["state_float"][i][62:65])
                 _dist_normalized = min(_dist_to_vcp / config_copy.risk_tolerance_vcp_dist_max, 1.0)
                 reward_into[i] += humanlike_risk_tolerance_reward * (_dist_normalized - risk_tolerance) ** 2
+
     for i in range(n_frames - 1):  # Loop over all frames that were generated
         # Switch memory buffer sometimes
         if random.random() < 0.1:
