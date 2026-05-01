@@ -1,40 +1,65 @@
 #!/bin/bash
 # =============================================================
-# Script 2: setup_linesight.sh
-# =============================================================
-# Installs Linesight RL framework and starts training.
-# Prerequisites: setup_tmnf.sh must have been run first.
-#
-# Usage:
-#   chmod +x setup_linesight.sh && ./setup_linesight.sh
-#
-# IMPORTANT: After the game launches, check VNC.
-#   If there's a "Stay offline" popup, click it to dismiss.
-#   Training will begin automatically after that. 
+# Custom Script 2: setup_linesight_custom.sh
+# Uses your RacerHelper-DriverConditionedRL repo instead of
+# cloning the original pb4git/linesight repo.
+# Prerequisite: setup_tmnf.sh already ran successfully.
 # =============================================================
 
 set -euo pipefail
 
 USERNAME="wineuser"
 
-log() { echo ""; echo "==== $1 ===="; }
+# CHANGE THIS ONLY IF YOUR GITHUB URL IS DIFFERENT
+REPO_URL="https://github.com/jad-lakkis/RacerHelper-DriverConditionedRL.git"
 
-# ---- Step 1: Install Linesight ----
-log "Step 1/5: Installing Linesight"
+REPO_DIR="/home/${USERNAME}/RacerHelper-DriverConditionedRL"
+LINESIGHT_DIR="${REPO_DIR}/linesight"
+
+log() {
+    echo ""
+    echo "==== $1 ===="
+}
+
+# ---- Step 1: Clone or update your repo ----
+log "Step 1/5: Cloning/updating your RacerHelper repo"
+
 cd /home/${USERNAME}
 
-if [ ! -d linesight ]; then
-    git clone https://github.com/pb4git/linesight
+if [ ! -d "${REPO_DIR}/.git" ]; then
+    git clone "${REPO_URL}" "${REPO_DIR}"
+else
+    cd "${REPO_DIR}"
+    git pull
 fi
-cd linesight
 
-# Install dependencies (torch should already be present from RunPod template)
+# Verify expected Linesight structure
+if [ ! -d "${LINESIGHT_DIR}" ]; then
+    echo "ERROR: Could not find ${LINESIGHT_DIR}"
+    echo "Your repo must contain a linesight/ folder."
+    exit 1
+fi
+
+if [ ! -f "${LINESIGHT_DIR}/scripts/train.py" ]; then
+    echo "ERROR: Could not find ${LINESIGHT_DIR}/scripts/train.py"
+    exit 1
+fi
+
+if [ ! -f "${LINESIGHT_DIR}/config_files/config.py" ]; then
+    echo "ERROR: Could not find ${LINESIGHT_DIR}/config_files/config.py"
+    exit 1
+fi
+
+cd "${LINESIGHT_DIR}"
+
+# Install dependencies/package
 pip install -e . 2>&1 | tail -5
-echo "Linesight installed."
+echo "Your modified Linesight repo installed."
 
-# ---- Step 2: Create launch script ----
+# ---- Step 2: Create game launch script ----
 log "Step 2/5: Creating game launch script"
-cat > /home/${USERNAME}/linesight/scripts/launch_game.sh << 'EOF'
+
+cat > "${LINESIGHT_DIR}/scripts/launch_game.sh" << 'EOF'
 #!/bin/bash
 export DISPLAY=:1
 export WINEARCH=win32
@@ -47,11 +72,13 @@ mkdir -p "$XDG_RUNTIME_DIR"
 
 exec wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TMLoader.exe run TmForever "default" /configstring="set custom_port $1"
 EOF
-chmod +x /home/${USERNAME}/linesight/scripts/launch_game.sh
+
+chmod +x "${LINESIGHT_DIR}/scripts/launch_game.sh"
 
 # ---- Step 3: Configure user_config.py ----
 log "Step 3/5: Configuring user_config.py"
-cat > /home/${USERNAME}/linesight/config_files/user_config.py << 'PYEOF'
+
+cat > "${LINESIGHT_DIR}/config_files/user_config.py" << PYEOF
 from pathlib import Path
 import os
 import platform
@@ -71,9 +98,9 @@ trackmania_base_path = _wine_docs / "TmForever"
 base_tmi_port = 8478
 
 # Linux launch script
-linux_launch_game_path = "/home/wineuser/linesight/scripts/launch_game.sh"
+linux_launch_game_path = "${LINESIGHT_DIR}/scripts/launch_game.sh"
 
-# Windows paths (unused on Linux)
+# Windows paths, unused on Linux
 windows_TMLoader_path = Path(os.path.expanduser("~")) / "AppData" / "Local" / "TMLoader" / "TMLoader.exe"
 windows_TMLoader_profile_name = "default"
 
@@ -84,58 +111,50 @@ PYEOF
 # ---- Step 4: Patch config.py / config_copy.py ----
 log "Step 4/5: Patching config files"
 
-# Add is_linux if missing
-if ! grep -q "is_linux" /home/${USERNAME}/linesight/config_files/config.py; then
+if ! grep -q "is_linux" "${LINESIGHT_DIR}/config_files/config.py"; then
     echo '
 import platform
 is_linux = platform.system() == "Linux"
-' >> /home/${USERNAME}/linesight/config_files/config.py
+' >> "${LINESIGHT_DIR}/config_files/config.py"
 fi
 
-# Copy config.py to config_copy.py
-cp /home/${USERNAME}/linesight/config_files/config.py /home/${USERNAME}/linesight/config_files/config_copy.py
+cp "${LINESIGHT_DIR}/config_files/config.py" "${LINESIGHT_DIR}/config_files/config_copy.py"
 
-# Set 1 game instance (more stable, can increase to 2 later)
-sed -i 's/gpu_collectors_count = 2/gpu_collectors_count = 1/' /home/${USERNAME}/linesight/config_files/config.py
-sed -i 's/gpu_collectors_count = 2/gpu_collectors_count = 1/' /home/${USERNAME}/linesight/config_files/config_copy.py
+# Use one game instance first for stability
+sed -i 's/gpu_collectors_count = 2/gpu_collectors_count = 1/' "${LINESIGHT_DIR}/config_files/config.py"
+sed -i 's/gpu_collectors_count = 2/gpu_collectors_count = 1/' "${LINESIGHT_DIR}/config_files/config_copy.py"
 
-# Clear Python cache
-find /home/${USERNAME}/linesight/config_files/__pycache__ -type f -delete 2>/dev/null || true
+find "${LINESIGHT_DIR}/config_files/__pycache__" -type f -delete 2>/dev/null || true
 
-# Fix ownership
-chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
+chown -R ${USERNAME}:${USERNAME} "/home/${USERNAME}"
 
 echo "Config files patched."
 
 # ---- Step 5: Start VNC on :1 and launch training ----
 log "Step 5/5: Starting training"
 
-# Start VNC on Xorg display for monitoring the game
 x11vnc -display :1 -passwd mypasswd -shared -forever -repeat -xkb -rfbport 5901 &>/dev/null &
 
 echo ""
 echo "============================================================"
-echo "  Starting Linesight RL Training"
+echo "  Starting Custom Linesight Training"
 echo "============================================================"
 echo ""
-echo "  IMPORTANT: After the game launches, check VNC on port 5901."
-echo "  If there is a 'Stay offline' popup, click it to dismiss."
-echo "  Training will start automatically after that."
+echo "  Repo:"
+echo "    ${REPO_DIR}"
 echo ""
-echo "  To monitor via VNC (from your local machine):"
-echo "    ssh -L 5901:localhost:5901 root@<RUNPOD_IP> -p <PORT> -i <KEY>"
-echo "    Connect Remmina (VNC) to localhost:5901 (password: mypasswd)"
+echo "  Linesight path:"
+echo "    ${LINESIGHT_DIR}"
 echo ""
-echo "  To monitor training metrics:"
-echo "    (in another terminal) cd /home/wineuser/linesight"
+echo "  IMPORTANT:"
+echo "    Check VNC on port 5901."
+echo "    If TrackMania shows a 'Stay offline' popup, click it."
+echo ""
+echo "  TensorBoard:"
+echo "    cd ${LINESIGHT_DIR}"
 echo "    tensorboard --logdir=tensorboard --bind_all"
-echo "    ssh -L 6006:localhost:6006 root@<RUNPOD_IP> -p <PORT> -i <KEY>"
-echo "    Open http://localhost:6006 in your browser"
 echo ""
-echo "  GPU rendering: DXVK -> Vulkan -> NVIDIA GPU"
-echo "  Neural network training: PyTorch -> CUDA -> NVIDIA GPU"
 echo "============================================================"
 echo ""
 
-# Launch training as wineuser
-su wineuser -c 'cd /home/wineuser/linesight && DISPLAY=:1 python scripts/train.py'
+su ${USERNAME} -c "cd ${LINESIGHT_DIR} && DISPLAY=:1 python scripts/train.py"
