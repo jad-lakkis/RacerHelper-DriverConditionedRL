@@ -484,8 +484,7 @@ class GameInstanceManager:
                                 - distance_since_track_begin,
                             ),
                             sim_state_mobil.is_freewheeling,
-                            config_copy.braking_aggression,  # driver profile conditioning (index 184)
-                            config_copy.risk_tolerance,       # driver risk conditioning (index 185)
+
                         )
                     ).astype(np.float32)
 
