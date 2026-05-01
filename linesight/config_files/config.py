@@ -262,7 +262,7 @@ timeout_between_runs_ms = 600_000_000
 tmi_protection_timeout_s = 500
 game_reboot_interval = 3600 * 12  # In seconds
 
-frames_before_save_best_runs = 1_500_000
+frames_before_save_best_runs = 0
 
 plot_race_time_left_curves = False
 n_transitions_to_plot_in_distribution_curves = 1000

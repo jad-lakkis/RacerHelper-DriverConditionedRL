@@ -403,30 +403,77 @@ def learner_process_fn(
                 walltime=walltime_tb,
             )
 
+# ===============================================
+#   SAVE TOP-2 FINISHED RACES
+# ===============================================
         # ===============================================
-        #   SAVE STUFF IF THIS WAS A GOOD RACE
+        #   SAVE TOP-2 FINISHED RACES
         # ===============================================
 
-        if end_race_stats["race_time"] < accumulated_stats["alltime_min_ms"].get(map_name, 99999999999):
-            # This is a new alltime_minimum
-            accumulated_stats["alltime_min_ms"][map_name] = end_race_stats["race_time"]
+        if end_race_stats["race_finished"]:
+            race_time = end_race_stats["race_time"]
+
+            # Keep alltime_min_ms compatible with the original statistics
+            if race_time < accumulated_stats["alltime_min_ms"].get(map_name, 99999999999):
+                accumulated_stats["alltime_min_ms"][map_name] = race_time
+
             if accumulated_stats["cumul_number_frames_played"] > config_copy.frames_before_save_best_runs:
-                name = f"{map_name}_{end_race_stats['race_time']}"
-                utilities.save_run(
-                    base_dir,
-                    save_dir / "best_runs" / name,
-                    rollout_results,
-                    f"{name}.inputs",
-                    inputs_only=False,
-                )
-                utilities.save_checkpoint(
-                    save_dir / "best_runs",
-                    online_network,
-                    target_network,
-                    optimizer1,
-                    scaler,
+                if "best_two_finished_ms" not in accumulated_stats:
+                    accumulated_stats["best_two_finished_ms"] = {}
+
+                current_top2 = accumulated_stats["best_two_finished_ms"].get(map_name, [])
+
+                should_save = (
+                    len(current_top2) < 2
+                    or race_time < max(current_top2)
                 )
 
+                if should_save:
+                    updated_top2 = sorted(current_top2 + [race_time])[:2]
+                    accumulated_stats["best_two_finished_ms"][map_name] = updated_top2
+
+                    best_runs_dir = save_dir / "best_runs"
+                    best_runs_dir.mkdir(parents=True, exist_ok=True)
+
+                    name = (
+                        f"{map_name}_{race_time}_"
+                        f"{datetime.now().strftime('%m%d_%H%M%S')}_"
+                        f"{accumulated_stats['cumul_number_frames_played']}_"
+                        f"{'explo' if is_explo else 'eval'}"
+                    )
+
+                    utilities.save_run(
+                        base_dir,
+                        best_runs_dir / name,
+                        rollout_results,
+                        f"{name}.inputs",
+                        inputs_only=False,
+                    )
+
+                    utilities.save_checkpoint(
+                        best_runs_dir,
+                        online_network,
+                        target_network,
+                        optimizer1,
+                        scaler,
+                    )
+
+                    # Remove saved runs for this map that are no longer in the top 2
+                    keep_times = {str(t) for t in updated_top2}
+
+                    for old_run in best_runs_dir.glob(f"{map_name}_*"):
+                        parts = old_run.name.split("_")
+                        if len(parts) < 2:
+                            continue
+
+                        old_time = parts[1]
+
+                        if old_time not in keep_times:
+                            if old_run.is_dir():
+                                import shutil
+                                shutil.rmtree(old_run)
+                            else:
+                                old_run.unlink()
         if end_race_stats["race_time"] < config_copy.threshold_to_save_all_runs_ms:
             name = f"{map_name}_{end_race_stats['race_time']}_{datetime.now().strftime('%m%d_%H%M%S')}_{accumulated_stats['cumul_number_frames_played']}_{'explo' if is_explo else 'eval'}"
             utilities.save_run(
@@ -641,7 +688,7 @@ def learner_process_fn(
                     }
                 )
             for key, value in accumulated_stats.items():
-                if key not in ["alltime_min_ms", "rolling_mean_ms"]:
+                if key not in ["alltime_min_ms", "rolling_mean_ms", "best_two_finished_ms"]:
                     step_stats[key] = value
             for key, value in accumulated_stats["alltime_min_ms"].items():
                 step_stats[f"alltime_min_ms_{map_name}"] = value
@@ -706,6 +753,9 @@ def learner_process_fn(
                 pass
 
             for k, v in step_stats.items():
+                if isinstance(v, (dict, list, tuple)):
+                    continue
+
                 tensorboard_writer.add_scalar(
                     tag=k,
                     scalar_value=v,
