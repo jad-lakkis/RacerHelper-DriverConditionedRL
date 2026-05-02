@@ -159,6 +159,64 @@ See §24 of the linesight README for the full mathematical derivation.
 
 ---
 
+---
+
+## 11) Oversteer / Understeer Style Conditioning
+
+The system conditions the RL agent on an **oversteer/understeer score** `s ∈ [−5, 5]` representing the target driver's characteristic cornering style. Negative values describe an understeer-preferring driver (car pushes wide, front washes out); positive values describe an oversteer-preferring driver (rear steps out, countersteer corrections).
+
+### Signal Construction
+
+Two mutually exclusive per-step signals are derived from the car's velocity state:
+
+| Signal | Condition | Value |
+|---|---|---|
+| **Oversteer** | lateral slip ratio `\|v_lat\| / \|v_fwd\|` is high | `clip(slip / 0.3, 0, 1) → [0, 1]` |
+| **Understeer** | steering pressed AND slip ratio `< 0.04` | `1.0` (binary flag) |
+
+These are combined into a single signed signal:
+
+```
+o_signal = clip(oversteer_component − understeer_component, −1, 1)
+```
+
+- `o = +1`: full oversteer (lateral slip saturated)
+- `o = −1`: full understeer (steering applied, near-zero lateral response)
+- `o =  0`: neutral tracking
+
+The signal is suppressed below 10 m/s to avoid low-speed noise.
+
+### Reward
+
+```
+r = coeff × (s / 5) × o_signal
+```
+
+The reward is **positive when the agent's cornering style aligns with the driver's score** and negative when misaligned:
+
+| Score | Behavior | Reward |
+|---|---|---|
+| `s > 0` (oversteer driver) | agent oversteers (`o > 0`) | positive |
+| `s < 0` (understeer driver) | agent understeers (`o < 0`) | positive |
+| any | misaligned style | negative |
+| `s = 0` | disabled | 0 |
+
+### Configuration
+
+In `config_files/config.py`:
+```python
+oversteer_understeer_score = 0.0   # [-5, 5]; 0 = disabled
+humanlike_oversteer_understeer_reward_schedule = [(0, 0.05)]
+```
+
+Slip thresholds can be tuned in `trackmania_rl/buffer_management.py`:
+```python
+_OVERSTEER_SLIP_SAT  = 0.3   # |v_lat|/|v_fwd| at which oversteer signal saturates
+_UNDERSTEER_SLIP_MAX = 0.04  # |v_lat|/|v_fwd| below which understeer fires when steering
+```
+
+---
+
 ## Team
 - Jad Al Lakkis  
 - Ibrahim Khaled
