@@ -242,7 +242,37 @@ humanlike_accel_tap_penalty_schedule = [(0, -0.05)]
 
 ---
 
-## 14) Extract Driver Profile Script
+## 14) Corner Entry Speed Reward
+
+The system adds a sparse reward term for **corner entry speed**, using a target ratio `ρ ∈ [0, 1]` where:
+
+```
+ρ = median corner-entry speed / peak speed
+```
+
+### How it works
+
+| Component | Mechanism |
+|---|---|
+| **Target profile** | `corner_entry_speed_ratio` represents how much speed the target driver carries into corners. Higher values mean later braking / faster corner entry. |
+| **Corner detection** | A corner entry is detected when the curvature proxy `κ = \|yaw_rate_y\| / max(\|v_fwd\|, 1.0)` crosses the `0.010 1/m` threshold. |
+| **Reward signal** | At each detected entry, a penalty is applied: `r = coeff × (entry_ratio − ρ)²`. Since `coeff` is negative, mismatched entry speed is penalized. |
+
+This is applied during buffer construction; it does not add a new network input.
+
+### Configuration
+
+In `config_files/config.py`:
+```python
+corner_entry_speed_ratio = 0.84
+humanlike_corner_entry_speed_reward_schedule = [(0, -0.2)]
+```
+
+The ratio can be copied from `extract_driver_profile.py` after running it on a driver replay.
+
+---
+
+## 15) Extract Driver Profile Script
 
 `linesight/scripts/extract_driver_profile.py` converts a Trackmania `.Replay.Gbx` into the driver-style values used by the conditioning system.
 
@@ -258,6 +288,7 @@ PYTHONPATH=. python scripts/extract_driver_profile.py <replay.Replay.Gbx>
 | `braking_aggression` | Target brake usage profile in `[0, 1]` |
 | `oversteer_understeer_score` | Cornering style score in `[-5, 5]` |
 | `corner_entry_speed_level` | Coarse entry-speed label: `low`, `medium`, or `high` |
+| `corner_entry_speed_ratio` | Numeric target used by the corner-entry-speed reward |
 
 The script also prints the config values to paste into `config_files/config.py` before training or evaluating a personalized driver profile.
 
