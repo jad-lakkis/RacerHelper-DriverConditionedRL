@@ -53,6 +53,8 @@ def fill_buffer_from_rollout_with_n_steps_rule(
     oversteer_understeer_score: float,
     humanlike_steer_tap_penalty: float,
     humanlike_accel_tap_penalty: float,
+    humanlike_corner_entry_speed_reward: float,
+    corner_entry_speed_ratio: float,
 ):
     assert len(rollout_results["frames"]) == len(rollout_results["current_zone_idx"])
     n_frames = len(rollout_results["frames"])
@@ -150,6 +152,41 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                 last_nonzero_dir = _d
         # Prepend a 0 so flip_cumsum[i] = sum(flip_at_step[0:i]), enabling O(1) window queries
         flip_cumsum = np.concatenate([[0.0], np.cumsum(flip_at_step)])
+
+    # --- Corner entry speed alignment ---
+    # Curvature proxy: κ = |yaw_rate| / max(|v_fwd|, 1.0)
+    #   state_float index 54 = angular velocity Y (yaw rate, std≈1 rad/s)
+    #   state_float index 58 = forward speed (mean≈55 m/s)
+    # A rising edge above CORNER_CURV_THRESH marks a corner entry.
+    # At each entry the Brier-score penalty fires:
+    #   r = coeff × (entry_ratio − target_ratio)²
+    # where entry_ratio = agent speed at entry / rollout peak speed.
+    _CORNER_CURV_THRESH = 0.010  # 1/m — mirrors extract_driver_profile.py constant
+    _CORNER_MIN_GAP = 10         # steps (500 ms) — matches extract_driver_profile.py (5 × 100 ms samples)
+    _YAW_RATE_IDX = 54
+    _V_FWD_IDX = 58
+    corner_entry_speed_reward_at = np.zeros(n_frames)
+    if humanlike_corner_entry_speed_reward != 0:
+        kappa = np.array([
+            abs(float(rollout_results["state_float"][_i][_YAW_RATE_IDX]))
+            / max(abs(float(rollout_results["state_float"][_i][_V_FWD_IDX])), 1.0)
+            for _i in range(n_frames - 1)
+        ] + [0.0])  # terminal frame gets zero
+        peak_speed = max(
+            (abs(float(rollout_results["state_float"][_i][_V_FWD_IDX])) for _i in range(n_frames - 1)),
+            default=1.0,
+        )
+        peak_speed = max(peak_speed, 1.0)
+        above = kappa > _CORNER_CURV_THRESH
+        last_entry = -_CORNER_MIN_GAP - 1
+        for _i in range(1, n_frames - 1):
+            if above[_i] and not above[_i - 1] and (_i - last_entry) >= _CORNER_MIN_GAP:
+                entry_speed = abs(float(rollout_results["state_float"][max(0, _i - 1)][_V_FWD_IDX]))
+                entry_ratio = entry_speed / peak_speed
+                corner_entry_speed_reward_at[_i] = (
+                    humanlike_corner_entry_speed_reward * (entry_ratio - corner_entry_speed_ratio) ** 2
+                )
+                last_entry = _i
 
     # Slip-ratio thresholds for oversteer/understeer detection
     _OVERSTEER_SLIP_SAT = 0.3   # |v_lat|/|v_fwd| at which oversteer signal saturates to 1
@@ -267,6 +304,11 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                     _is_understeering = _is_steering and (_v_lat / max(_v_fwd, 1.0) < _UNDERSTEER_SLIP_MAX)
                     _o_signal = max(-1.0, min(1.0, _slip - (1.0 if _is_understeering else 0.0)))
                     reward_into[i] += humanlike_oversteer_understeer_reward * (oversteer_understeer_score / 5.0) * _o_signal
+
+            # Corner entry speed alignment — Brier-score penalty detected in pre-pass.
+            # Fires only at corner entry steps; near-zero when agent matches target ratio.
+            if humanlike_corner_entry_speed_reward != 0:
+                reward_into[i] += corner_entry_speed_reward_at[i]
 
     for i in range(n_frames - 1):  # Loop over all frames that were generated
         # Switch memory buffer sometimes
