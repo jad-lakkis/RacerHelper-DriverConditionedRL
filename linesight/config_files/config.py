@@ -299,7 +299,7 @@ use_jit = True
 # gpu_collectors_count is the number of Trackmania instances that will be launched in parallel.
 # It is recommended that users adjust this number depending on the performance of their machine.
 # We recommend trying different values and finding the one that maximises the number of batches done per unit of time.
-gpu_collectors_count = 2
+gpu_collectors_count = 1
 
 send_shared_network_every_n_batches = 10
 update_inference_network_every_n_actions = 20
@@ -414,8 +414,8 @@ map_cycle += [
     # repeat(("B03", '"Official Maps\Green\B03-Race.Challenge.Gbx"', "B03-Race_10m_cl.npy", False, True), 1),
     # repeat(("B05", '"Official Maps\Green\B05-Race.Challenge.Gbx"', "B05-Race_10m_cl.npy", True, True), 4),
     # repeat(("B05", '"Official Maps\Green\B05-Race.Challenge.Gbx"', "B05-Race_10m_cl.npy", False, True), 1),
-    repeat(("Bahrain", '"Bahrain_Circuit.Challenge.Gbx"', "Bahrain_Circuit_0.5m_jadlakkisjad_012629.npy", True, True), 4),
-    repeat(("Bahrain", '"Bahrain_Circuit.Challenge.Gbx"', "Bahrain_Circuit_0.5m_jadlakkisjad_012629.npy", False, True), 1),
+    repeat(("Bahrain", '"My Challenges/Bahrain_Circuit.Challenge.Gbx"', "Bahrain_Circuit_0.5m_jadlakkisjad_012629.npy", True, True), 4),
+    repeat(("Bahrain", '"My Challenges/Bahrain_Circuit.Challenge.Gbx"', "Bahrain_Circuit_0.5m_jadlakkisjad_012629.npy", False, True), 1),
     #repeat(("hock", "ESL-Hockolicious.Challenge.Gbx", "ESL-Hockolicious_0.5m_cl2.npy", True, True), 4),
     #repeat(("hock", "ESL-Hockolicious.Challenge.Gbx", "ESL-Hockolicious_0.5m_cl2.npy", False, True), 1),
     # ^^^^^^^ is the other map we used 

@@ -1,33 +1,32 @@
 """
-This file contains user-level configuration.
+This file contains user-level configuration for the Wine/Linux environment.
 It is expected that the user fills this file once when setting up the project, and does not need to modify it after.
 """
 
-import os
 from pathlib import Path
-from sys import platform
+import os
+import platform
 
-is_linux = platform in ["linux", "linux2"]
+is_linux = platform.system() == "Linux"
 
-username = "tmnf_account_username"  # Username of the TMNF account
+username = "default"  # TMNF profile name
 
-# Path where Python_Link.as should be placed so that it can be loaded in TMInterface.
-# Usually Path(os.path.expanduser("~")) / "Documents" / "TMInterface" / "Plugins" / "Python_Link.as"
-target_python_link_path = Path(os.path.expanduser("~")) / "Documents" / "TMInterface" / "Plugins" / "Python_Link.as"
+# Wine prefix Documents path
+_wine_docs = Path("/home/wineuser/.wine/drive_c/users/wineuser/Documents")
 
-# Typically path(os.path.expanduser("~")) / "Documents" / "TrackMania"
-trackmania_base_path = Path(os.path.expanduser("~")) / "Documents" / "TrackMania"
+# Path where Python_Link.as is placed so that it can be loaded in TMInterface
+target_python_link_path = _wine_docs / "TMInterface" / "Plugins" / "Python_Link.as"
+
+# TrackMania base path
+trackmania_base_path = _wine_docs / "TmForever"
 
 # Communication port for the first TMInterface instance that will be launched.
 # If using multiple instances, the ports used will be base_tmi_port + 1, +2, +3, etc...
 base_tmi_port = 8478
 
-# If on Linux, path of a shell script that launches the game, with the TMInterface port as first argument
-linux_launch_game_path = "path_to_be_filled_only_if_on_linux"
+# Linux launch script — resolved relative to this file's location
+linux_launch_game_path = Path(__file__).parent.parent / "scripts" / "launch_game.sh"
 
-# If on windows, path where TMLoader can be found.
-# Usually Path(os.path.expanduser("~") / "AppData" / "Local" / "TMLoader" / "TMLoader.exe"
+# Windows paths, unused on Linux
 windows_TMLoader_path = Path(os.path.expanduser("~")) / "AppData" / "Local" / "TMLoader" / "TMLoader.exe"
-
-# If on windows, name of the TMLoader profile that with launch TmForever + TMInterface
 windows_TMLoader_profile_name = "default"

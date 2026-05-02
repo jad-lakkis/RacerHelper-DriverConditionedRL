@@ -129,158 +129,19 @@ EOF
 
 chmod +x "${LINESIGHT_DIR}/scripts/launch_game.sh"
 
-# ---- Step 3: Configure user_config.py ----
-log "Step 3/5: Configuring user_config.py"
+# ---- Step 3: user_config.py already lives in the repo (linesight/config_files/user_config.py) ----
+log "Step 3/5: user_config.py already configured in repo — skipping"
 
-cat > "${LINESIGHT_DIR}/config_files/user_config.py" << PYEOF
-from pathlib import Path
-import os
-import platform
+# ---- Step 4: Sync config_copy.py from repo config.py ----
+log "Step 4/5: Syncing config_copy.py"
 
-username = "default"  # TMNF profile name
-
-# Wine prefix Documents path
-_wine_docs = Path("/home/wineuser/.wine/drive_c/users/wineuser/Documents")
-
-# Path where Python_Link.as is placed
-target_python_link_path = _wine_docs / "TMInterface" / "Plugins" / "Python_Link.as"
-
-# TrackMania base path
-trackmania_base_path = _wine_docs / "TmForever"
-
-# Communication port for TMInterface
-base_tmi_port = 8478
-
-# Linux launch script
-linux_launch_game_path = "${LINESIGHT_DIR}/scripts/launch_game.sh"
-
-# Windows paths, unused on Linux
-windows_TMLoader_path = Path(os.path.expanduser("~")) / "AppData" / "Local" / "TMLoader" / "TMLoader.exe"
-windows_TMLoader_profile_name = "default"
-
-# Platform detection
-is_linux = platform.system() == "Linux"
-PYEOF
-
-# ---- Step 4: Patch config.py / config_copy.py ----
-log "Step 4/5: Patching config files for Bahrain"
-
-if ! grep -q "is_linux" "${LINESIGHT_DIR}/config_files/config.py"; then
-    echo '
-import platform
-is_linux = platform.system() == "Linux"
-' >> "${LINESIGHT_DIR}/config_files/config.py"
-fi
-
-# Patch map_cycle safely:
-# - old map_cycle is commented, not deleted
-# - new Bahrain map_cycle is added
-CUSTOM_MAP_TMI_PATH="${CUSTOM_MAP_TMI_PATH}" \
-CUSTOM_REFERENCE_LINE="${CUSTOM_REFERENCE_LINE}" \
-CUSTOM_MAP_SHORT_NAME="${CUSTOM_MAP_SHORT_NAME}" \
-python - "${LINESIGHT_DIR}/config_files/config.py" << 'PYEOF'
-from pathlib import Path
-import os
-import re
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-
-map_name = os.environ["CUSTOM_MAP_SHORT_NAME"]
-map_path = os.environ["CUSTOM_MAP_TMI_PATH"]
-ref_line = os.environ["CUSTOM_REFERENCE_LINE"]
-
-custom_block = f'''
-# =============================================================
-# CUSTOM BAHRAIN MAP CYCLE BEGIN
-# Old map_cycle above is kept/commented as reference.
-# This block overrides the previous training map.
-# =============================================================
-map_cycle = [
-    repeat(("{map_name}", '"{map_path}"', "{ref_line}", True, True), 4),
-    repeat(("{map_name}", '"{map_path}"', "{ref_line}", False, True), 1),
-]
-
-# Bahrain first test schedule speed
-global_schedule_speed = 1.0
-# =============================================================
-# CUSTOM BAHRAIN MAP CYCLE END
-# =============================================================
-'''
-
-begin = "# =============================================================\n# CUSTOM BAHRAIN MAP CYCLE BEGIN"
-end = "# =============================================================\n# CUSTOM BAHRAIN MAP CYCLE END\n# ============================================================="
-
-# Remove old custom block if script is re-run
-if "CUSTOM BAHRAIN MAP CYCLE BEGIN" in text:
-    text = re.sub(
-        r'\n?# =============================================================\n# CUSTOM BAHRAIN MAP CYCLE BEGIN.*?# =============================================================\n# CUSTOM BAHRAIN MAP CYCLE END\n# =============================================================\n?',
-        "\n",
-        text,
-        flags=re.DOTALL
-    )
-
-lines = text.splitlines()
-
-# Comment the last active map_cycle block, but do not delete it
-map_cycle_indices = [
-    i for i, line in enumerate(lines)
-    if re.match(r'^\s*map_cycle\s*=', line)
-]
-
-if map_cycle_indices:
-    start = map_cycle_indices[-1]
-
-    # If it is not already commented, comment the block
-    if not lines[start].lstrip().startswith("#"):
-        depth = 0
-        end_idx = start
-
-        for j in range(start, len(lines)):
-            depth += lines[j].count("[")
-            depth -= lines[j].count("]")
-            end_idx = j
-            if j > start and depth <= 0:
-                break
-
-        for j in range(start, end_idx + 1):
-            lines[j] = "# OLD MAP_CYCLE: " + lines[j]
-
-# Comment the last active global_schedule_speed line, but do not delete it
-gss_indices = [
-    i for i, line in enumerate(lines)
-    if re.match(r'^\s*global_schedule_speed\s*=', line)
-]
-
-if gss_indices:
-    i = gss_indices[-1]
-    if not lines[i].lstrip().startswith("#"):
-        lines[i] = "# OLD global_schedule_speed: " + lines[i]
-
-text = "\n".join(lines).rstrip() + "\n" + custom_block + "\n"
-
-path.write_text(text)
-PYEOF
-
-# Make config_copy.py the same as patched config.py
 cp "${LINESIGHT_DIR}/config_files/config.py" "${LINESIGHT_DIR}/config_files/config_copy.py"
-
-# Use one game instance first for stability
-sed -i 's/gpu_collectors_count = 2/gpu_collectors_count = 1/' "${LINESIGHT_DIR}/config_files/config.py"
-sed -i 's/gpu_collectors_count = 2/gpu_collectors_count = 1/' "${LINESIGHT_DIR}/config_files/config_copy.py"
 
 find "${LINESIGHT_DIR}/config_files/__pycache__" -type f -delete 2>/dev/null || true
 
 chown -R ${USERNAME}:${USERNAME} "/home/${USERNAME}"
 
-echo "Config files patched for Bahrain."
-echo ""
-echo "Training map path:"
-echo "  ${CUSTOM_MAP_TMI_PATH}"
-echo ""
-echo "Reference line:"
-echo "  ${CUSTOM_REFERENCE_LINE}"
+echo "config_copy.py synced from config.py."
 
 # ---- Step 5: Start VNC on :1 and launch training ----
 log "Step 5/5: Starting training"

@@ -91,6 +91,7 @@ if __name__ == "__main__":
     tensorboard_base_dir = base_dir / "tensorboard"
 
     # Copy Angelscript plugin to TMInterface dir
+    config_copy.target_python_link_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(
         base_dir / "trackmania_rl" / "tmi_interaction" / "Python_Link.as",
         config_copy.target_python_link_path,
