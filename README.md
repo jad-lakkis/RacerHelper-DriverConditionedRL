@@ -242,6 +242,27 @@ humanlike_accel_tap_penalty_schedule = [(0, -0.05)]
 
 ---
 
+## 14) Extract Driver Profile Script
+
+`linesight/scripts/extract_driver_profile.py` converts a Trackmania `.Replay.Gbx` into the driver-style values used by the conditioning system.
+
+Run from `linesight/`:
+```bash
+PYTHONPATH=. python scripts/extract_driver_profile.py <replay.Replay.Gbx>
+```
+
+### Outputs
+
+| Output | Purpose |
+|---|---|
+| `braking_aggression` | Target brake usage profile in `[0, 1]` |
+| `oversteer_understeer_score` | Cornering style score in `[-5, 5]` |
+| `corner_entry_speed_level` | Coarse entry-speed label: `low`, `medium`, or `high` |
+
+The script also prints the config values to paste into `config_files/config.py` before training or evaluating a personalized driver profile.
+
+---
+
 ## Team
 - Jad Al Lakkis  
 - Ibrahim Khaled
