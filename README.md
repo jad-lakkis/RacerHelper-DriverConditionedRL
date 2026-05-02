@@ -217,6 +217,31 @@ _UNDERSTEER_SLIP_MAX = 0.04  # |v_lat|/|v_fwd| below which understeer fires when
 
 ---
 
+---
+
+## 12) Brake Tap Penalty
+
+A brake press held for fewer than **3 consecutive steps (150 ms)** is treated as a micro-tap — no human driver commits to braking that briefly in a racing context. The violation is detected in a pre-pass over the rollout and a fixed penalty is applied at the release step.
+
+```python
+humanlike_brake_tap_penalty_schedule = [(0, -0.05)]
+```
+
+---
+
+## 13) Steering & Accelerator Tap Penalties
+
+Similar to the brake tap penalty but applied independently to **left/right steering** and **throttle** inputs. A press held fewer than 3 steps (150 ms) before release is penalised at the release step.
+
+Left and right holds are tracked independently so a direct L→R transition (no neutral frame between) correctly tags the left release at the step right begins. The steer tap penalty is orthogonal to the steering oscillation penalty (§ oscillation): oscillation catches rapid direction alternation by frequency; tap catches any individual press that is too short regardless of direction.
+
+```python
+humanlike_steer_tap_penalty_schedule = [(0, -0.05)]
+humanlike_accel_tap_penalty_schedule = [(0, -0.05)]
+```
+
+---
+
 ## Team
 - Jad Al Lakkis  
 - Ibrahim Khaled
