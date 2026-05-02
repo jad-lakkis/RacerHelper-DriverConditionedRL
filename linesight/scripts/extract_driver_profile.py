@@ -246,7 +246,7 @@ def compute_oversteer_understeer(positions: np.ndarray, disp_speed: np.ndarray,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compute_corner_entry_speed(disp_speed: np.ndarray, n_race_samples: int,
-                                pos_curv: np.ndarray) -> str:
+                                pos_curv: np.ndarray) -> tuple:
     """
     Ratio = median corner-entry speed / driver's own peak speed.
       high   > 0.60  (late braking, carries maximum speed into corners)
@@ -256,6 +256,9 @@ def compute_corner_entry_speed(disp_speed: np.ndarray, n_race_samples: int,
     Corner entries are detected from the kink-free position-based curvature.
     The first 10 samples (1 s) are skipped to exclude the race-start
     acceleration phase.
+
+    Returns (level_str, ratio_float) where ratio_float is the raw scalar
+    used by the reward function (corner_entry_speed_ratio in config.py).
     """
     curv = pos_curv[:n_race_samples]
     above  = (curv > CORNER_CURV_THRESH).astype(int)
@@ -271,10 +274,11 @@ def compute_corner_entry_speed(disp_speed: np.ndarray, n_race_samples: int,
         last = edge
 
     if len(entry_speeds) < 3:
-        return f"unknown (only {len(entry_speeds)} corners detected)"
+        return f"unknown (only {len(entry_speeds)} corners detected)", 0.5
 
     ratio = float(np.median(entry_speeds)) / max(float(disp_speed[:n_race_samples].max()), 1.0)
-    return "high" if ratio > 0.60 else ("medium" if ratio > 0.35 else "low")
+    level = "high" if ratio > 0.60 else ("medium" if ratio > 0.35 else "low")
+    return level, ratio
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -303,25 +307,28 @@ def extract_driver_profile(gbx_path: str) -> dict:
         positions, disp_spd, ghost.control_entries, race_start_ms,
         n_race_samples)
 
-    corner = compute_corner_entry_speed(disp_spd, n_race_samples, pos_curv)
+    corner_level, corner_ratio = compute_corner_entry_speed(disp_spd, n_race_samples, pos_curv)
 
     print()
     print("═" * 54)
     print("  DRIVER PROFILE")
     print("═" * 54)
-    print(f"  braking_aggression        = {braking:.3f}")
-    print(f"  oversteer_understeer_score= {ous:+.2f}")
-    print(f"  corner_entry_speed_level  = {corner}")
+    print(f"  braking_aggression         = {braking:.3f}")
+    print(f"  oversteer_understeer_score = {ous:+.2f}")
+    print(f"  corner_entry_speed_level   = {corner_level}")
+    print(f"  corner_entry_speed_ratio   = {corner_ratio:.3f}")
     print()
     print("  ── paste into config_files/config.py ──")
     print(f"  braking_aggression         = {round(braking, 2)}")
     print(f"  oversteer_understeer_score = {round(ous, 1)}")
+    print(f"  corner_entry_speed_ratio   = {round(corner_ratio, 2)}")
     print("═" * 54)
 
     return {
         "braking_aggression":         braking,
         "oversteer_understeer_score": ous,
-        "corner_entry_speed_level":   corner,
+        "corner_entry_speed_level":   corner_level,
+        "corner_entry_speed_ratio":   corner_ratio,
     }
 
 
