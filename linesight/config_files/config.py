@@ -183,11 +183,27 @@ humanlike_braking_aggression_reward_schedule = [
 #   distance in the Brier-score formula (in metres).  Set to approximately
 #   half the track width so that fully cutting an apex maps to dist_norm≈1.
 # -----------------------------------------------------------------------
-risk_tolerance = 0.5  # target driver risk level [0, 1]; 0.5 = neutral
+risk_tolerance = 0.2  # 0 = pure quadratic penalty on VCP deviation; coeff×d² → soft near line, steep far
 humanlike_risk_tolerance_reward_schedule = [
     (0, -0.05),
 ]
 risk_tolerance_vcp_dist_max = 15.0  # metres; normalisation for VCP distance
+
+# -----------------------------------------------------------------------
+# Oversteer / understeer conditioning
+# -----------------------------------------------------------------------
+# Score in [-5, 5]: negative = understeer-preferring driver, positive = oversteer.
+# Per-step reward = coeff × (score/5) × o_signal, where o_signal ∈ [-1, 1]:
+#   +1 = full oversteer (high lateral slip ratio)
+#   -1 = full understeer (steering applied, near-zero lateral response)
+#    0 = neutral tracking
+# Reward is positive when the agent's cornering style aligns with the score.
+# Only fires above 10 m/s to avoid low-speed noise.
+# -----------------------------------------------------------------------
+oversteer_understeer_score = 0.0  # [-5, 5]; 0 = neutral (no preference)
+humanlike_oversteer_understeer_reward_schedule = [
+    (0, 0.05),
+]
 
 n_steps = 3
 constant_reward_per_ms = -6 / 5000
