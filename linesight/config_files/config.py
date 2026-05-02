@@ -105,6 +105,12 @@ humanlike_brake_tap_penalty_schedule = [
 humanlike_low_speed_slide_penalty_schedule = [
     (0, -0.05),
 ]
+humanlike_steer_tap_penalty_schedule = [
+    (0, -0.05),
+]
+humanlike_accel_tap_penalty_schedule = [
+    (0, -0.05),
+]
 
 # -----------------------------------------------------------------------
 # Braking aggression conditioning

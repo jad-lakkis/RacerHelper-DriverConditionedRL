@@ -51,6 +51,8 @@ def fill_buffer_from_rollout_with_n_steps_rule(
     risk_tolerance: float,
     humanlike_oversteer_understeer_reward: float,
     oversteer_understeer_score: float,
+    humanlike_steer_tap_penalty: float,
+    humanlike_accel_tap_penalty: float,
 ):
     assert len(rollout_results["frames"]) == len(rollout_results["current_zone_idx"])
     n_frames = len(rollout_results["frames"])
@@ -89,6 +91,47 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                     # (the last brake step) — tagging here attributes the penalty correctly
                     brake_tap_penalty_at[_idx] = humanlike_brake_tap_penalty
                 brake_hold = 0
+
+    # --- Steering tap penalty ---
+    # A left or right press held fewer than MIN_STEER_HOLD_STEPS (150 ms) is a micro-tap.
+    # Detected at the release step, same accounting as brake tap.
+    # Left and right holds are tracked independently so a direct L→R transition
+    # correctly triggers the tap check for left at the step right begins.
+    MIN_STEER_HOLD_STEPS = 3  # 150 ms at 50 ms/step
+    steer_tap_penalty_at = np.zeros(n_frames)
+    if humanlike_steer_tap_penalty != 0:
+        left_hold = 0
+        right_hold = 0
+        for _idx in range(n_frames - 1):
+            _a = config_copy.inputs[int(rollout_results["actions"][_idx])]
+            if not _a["left"] and left_hold > 0:
+                if left_hold < MIN_STEER_HOLD_STEPS:
+                    steer_tap_penalty_at[_idx] = humanlike_steer_tap_penalty
+                left_hold = 0
+            if not _a["right"] and right_hold > 0:
+                if right_hold < MIN_STEER_HOLD_STEPS:
+                    steer_tap_penalty_at[_idx] = humanlike_steer_tap_penalty
+                right_hold = 0
+            if _a["left"]:
+                left_hold += 1
+            if _a["right"]:
+                right_hold += 1
+
+    # --- Accelerator tap penalty ---
+    # A throttle press held fewer than MIN_ACCEL_HOLD_STEPS (150 ms) is a micro-tap —
+    # no human driver blips the gas that briefly in a racing context.
+    MIN_ACCEL_HOLD_STEPS = 3  # 150 ms at 50 ms/step
+    accel_tap_penalty_at = np.zeros(n_frames)
+    if humanlike_accel_tap_penalty != 0:
+        accel_hold = 0
+        for _idx in range(n_frames - 1):
+            _a = config_copy.inputs[int(rollout_results["actions"][_idx])]
+            if not _a["accelerate"] and accel_hold > 0:
+                if accel_hold < MIN_ACCEL_HOLD_STEPS:
+                    accel_tap_penalty_at[_idx] = humanlike_accel_tap_penalty
+                accel_hold = 0
+            if _a["accelerate"]:
+                accel_hold += 1
 
     # --- Steering oscillation: prefix-sum of direction flips ---
     # A direction flip is a direct left↔right change (ignoring neutral steps).
@@ -161,6 +204,14 @@ def fill_buffer_from_rollout_with_n_steps_rule(
             # Brake tap: short press detected in pre-pass; apply at the release step
             if humanlike_brake_tap_penalty != 0:
                 reward_into[i] += brake_tap_penalty_at[i]
+
+            # Steering tap: short left/right press detected in pre-pass; apply at release step
+            if humanlike_steer_tap_penalty != 0:
+                reward_into[i] += steer_tap_penalty_at[i]
+
+            # Accelerator tap: short throttle press detected in pre-pass; apply at release step
+            if humanlike_accel_tap_penalty != 0:
+                reward_into[i] += accel_tap_penalty_at[i]
 
             # Steering oscillation: penalise every extra L↔R flip beyond 1 per 200 ms window
             # (1 flip = natural mid-corner correction; repeated flipping = inhuman tapping)
