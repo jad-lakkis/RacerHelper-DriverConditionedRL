@@ -211,6 +211,40 @@ humanlike_oversteer_understeer_reward_schedule = [
     (0, 0.05),
 ]
 
+# -----------------------------------------------------------------------
+# Corner entry speed conditioning
+# -----------------------------------------------------------------------
+# corner_entry_speed_ratio is a scalar in [0, 1] representing the driver's
+# characteristic corner entry speed as a fraction of their peak speed:
+#   high   > 0.60  (late braking — jadlakkisjad ≈ 0.84)
+#   medium   0.35–0.60
+#   low    < 0.35  (conservative, heavy braking before corners)
+#
+# At each detected corner entry the Brier-score penalty fires:
+#
+#   r = coeff × (entry_ratio − target_ratio)²
+#
+# where entry_ratio = agent's speed at that corner entry / rollout peak speed.
+# The penalty is minimised exactly when the agent's median corner entry ratio
+# converges to corner_entry_speed_ratio.
+#
+# coeff is negative (penalty). -0.2 makes the worst-case per-entry cost
+# -0.2, comparable to ~4 steps of the time penalty — meaningful but not
+# dominant (there are typically 10-30 corner entries per lap).
+#
+# Corner entries are detected from the yaw-rate curvature proxy:
+#   κ = |angular_velocity_y| / max(|v_fwd|, 1.0)   (state_float indices 54, 58)
+# A rising edge above CORNER_CURV_THRESH = 0.010 1/m triggers an entry.
+# This mirrors the detection logic in scripts/extract_driver_profile.py.
+#
+# corner_entry_speed_ratio is also used as a conditioning signal:
+# see extract_driver_profile.py output section for the replay-derived value.
+# -----------------------------------------------------------------------
+corner_entry_speed_ratio = 0.84  # median entry speed / peak speed [0, 1]
+humanlike_corner_entry_speed_reward_schedule = [
+    (0, -0.2),
+]
+
 n_steps = 3
 constant_reward_per_ms = -6 / 5000
 reward_per_m_advanced_along_centerline = 5 / 500
