@@ -296,6 +296,9 @@ def learner_process_fn(
         humanlike_risk_tolerance_reward = utilities.from_linear_schedule(
             config_copy.humanlike_risk_tolerance_reward_schedule, accumulated_stats["cumul_number_frames_played"]
         )
+        humanlike_oversteer_understeer_reward = utilities.from_linear_schedule(
+            config_copy.humanlike_oversteer_understeer_reward_schedule, accumulated_stats["cumul_number_frames_played"]
+        )
         gamma = utilities.from_linear_schedule(config_copy.gamma_schedule, accumulated_stats["cumul_number_frames_played"])
 
         # ===============================================
@@ -511,6 +514,8 @@ def learner_process_fn(
                 config_copy.braking_aggression,
                 humanlike_risk_tolerance_reward,
                 config_copy.risk_tolerance,
+                humanlike_oversteer_understeer_reward,
+                config_copy.oversteer_understeer_score,
             )
 
             accumulated_stats["cumul_number_memories_generated"] += number_memories_added_train + number_memories_added_test

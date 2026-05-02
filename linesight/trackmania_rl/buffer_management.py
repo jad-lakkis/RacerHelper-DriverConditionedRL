@@ -49,6 +49,8 @@ def fill_buffer_from_rollout_with_n_steps_rule(
     braking_aggression: float,
     humanlike_risk_tolerance_reward: float,
     risk_tolerance: float,
+    humanlike_oversteer_understeer_reward: float,
+    oversteer_understeer_score: float,
 ):
     assert len(rollout_results["frames"]) == len(rollout_results["current_zone_idx"])
     n_frames = len(rollout_results["frames"])
@@ -105,6 +107,10 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                 last_nonzero_dir = _d
         # Prepend a 0 so flip_cumsum[i] = sum(flip_at_step[0:i]), enabling O(1) window queries
         flip_cumsum = np.concatenate([[0.0], np.cumsum(flip_at_step)])
+
+    # Slip-ratio thresholds for oversteer/understeer detection
+    _OVERSTEER_SLIP_SAT = 0.3   # |v_lat|/|v_fwd| at which oversteer signal saturates to 1
+    _UNDERSTEER_SLIP_MAX = 0.04  # |v_lat|/|v_fwd| below which understeer fires when steering
 
     for i in range(1, n_frames):
         reward_into[i] += config_copy.constant_reward_per_ms * (
@@ -195,6 +201,21 @@ def fill_buffer_from_rollout_with_n_steps_rule(
                 _dist_to_vcp = np.linalg.norm(rollout_results["state_float"][i][62:65])
                 _dist_normalized = min(_dist_to_vcp / config_copy.risk_tolerance_vcp_dist_max, 1.0)
                 reward_into[i] += humanlike_risk_tolerance_reward * (_dist_normalized - risk_tolerance) ** 2
+
+            # Oversteer / understeer alignment:
+            #   o_signal ∈ [-1,1]: +1=oversteering (high lateral slip), -1=understeering
+            #   (steering applied but near-zero lateral response)
+            #   reward = coeff × (score/5) × o_signal → positive when style matches score
+            if humanlike_oversteer_understeer_reward != 0 and oversteer_understeer_score != 0:
+                _v_fwd = abs(float(rollout_results["state_float"][i][58]))
+                if _v_fwd >= 10.0:  # skip at low speed
+                    _v_lat = abs(float(rollout_results["state_float"][i][56]))
+                    _slip = min(_v_lat / max(_v_fwd, 1.0), _OVERSTEER_SLIP_SAT) / _OVERSTEER_SLIP_SAT
+                    _action = config_copy.inputs[int(rollout_results["actions"][i])]
+                    _is_steering = _action["left"] or _action["right"]
+                    _is_understeering = _is_steering and (_v_lat / max(_v_fwd, 1.0) < _UNDERSTEER_SLIP_MAX)
+                    _o_signal = max(-1.0, min(1.0, _slip - (1.0 if _is_understeering else 0.0)))
+                    reward_into[i] += humanlike_oversteer_understeer_reward * (oversteer_understeer_score / 5.0) * _o_signal
 
     for i in range(n_frames - 1):  # Loop over all frames that were generated
         # Switch memory buffer sometimes
