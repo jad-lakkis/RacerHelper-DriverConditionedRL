@@ -118,13 +118,58 @@
       <!-- ── Step 3: Generate ───────────────────────────────────────── -->
       <section class="card" id="step-generate">
         <h2 class="card-title"><span class="step-badge">3</span> Generate</h2>
-        <p class="card-sub">Send your hyperparameters to Service 3 and get your replay.</p>
+        <p class="card-sub">Start the fine-tuning job on Service 3. Training runs in the background.</p>
+
+        <div class="form-grid" style="margin-bottom:1.25rem">
+          <div class="field field--full">
+            <label for="max-hours">
+              Max Training Time
+              <span class="hint">hours (1 – 24)</span>
+              <span class="risk-value" id="hours-display">2 h</span>
+            </label>
+            <input type="range" id="max-hours" min="1" max="24" value="2" step="0.5" />
+            <div class="risk-labels">
+              <span>1 h</span><span>12 h</span><span>24 h</span>
+            </div>
+          </div>
+        </div>
 
         <button class="generate-btn" id="generate-btn" disabled>
-          Generate Replay
+          Start Training
         </button>
 
         <div class="generate-result" id="generate-result"></div>
+
+        <!-- Job status panel -->
+        <div class="job-panel" id="job-panel">
+          <div class="job-header">
+            <span class="job-id-label">Job ID</span>
+            <code class="job-id-value" id="job-id-display">—</code>
+            <button class="stop-btn" id="stop-btn" style="display:none">Stop training</button>
+          </div>
+
+          <div class="job-status-row">
+            <span class="job-status-badge" id="job-status-badge">pending</span>
+            <span class="job-results-count" id="job-results-count"></span>
+          </div>
+
+          <!-- Live training metrics -->
+          <div class="job-metrics" id="job-metrics">
+            <div class="job-metric-item">
+              <span class="job-metric-label">Best lap so far</span>
+              <span class="job-metric-value" id="job-best-lap">—</span>
+            </div>
+            <div class="job-metric-item">
+              <span class="job-metric-label">Style distance (ε = <span id="epsilon-display">—</span>)</span>
+              <span class="job-metric-value" id="job-distance">—</span>
+            </div>
+          </div>
+
+          <p class="job-message" id="job-message"></p>
+          <p class="job-error"   id="job-error"></p>
+
+          <div class="job-results-list" id="job-results-list"></div>
+        </div>
       </section>
 
     </main>

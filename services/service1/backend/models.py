@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Optional
 
 
 class Track(BaseModel):
@@ -22,9 +22,11 @@ class GenerateRequest(BaseModel):
     braking_aggression: float = Field(..., ge=0.0, le=1.0)
     oversteer_understeer_score: float = Field(..., ge=-5.0, le=5.0)
     corner_entry_speed_ratio: float = Field(..., ge=0.0, le=1.0)
+    max_training_hours: float = Field(default=2.0, gt=0.0, le=24.0)
 
 
 class GenerateResponse(BaseModel):
     status: str
+    job_id: Optional[str] = None
     hyperparameters: GenerateRequest
     message: str
