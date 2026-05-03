@@ -1,0 +1,48 @@
+networks:
+  racerhelper:
+    driver: bridge
+
+services:
+
+  service1:
+    build:
+      context: .
+      dockerfile: services/service1/Dockerfile
+    ports:
+      - "${SERVICE1_PORT}:${SERVICE1_PORT}"
+    environment:
+      - SERVICE2_URL=${SERVICE2_URL}
+      - SERVICE3_URL=${SERVICE3_URL}
+      - CORS_ORIGINS=${SERVICE1_CORS_ORIGINS}
+    depends_on:
+      - service2
+    networks:
+      - racerhelper
+    restart: unless-stopped
+
+  service2:
+    build:
+      context: .
+      dockerfile: services/service2/Dockerfile
+    ports:
+      - "${SERVICE2_PORT}:${SERVICE2_PORT}"
+    environment:
+      - LINESIGHT_SCRIPTS_PATH=${LINESIGHT_SCRIPTS_PATH}
+      - CORS_ORIGINS=${SERVICE2_CORS_ORIGINS}
+    networks:
+      - racerhelper
+    restart: unless-stopped
+
+  # ── Service 3 (not yet implemented) ──────────────────────────────
+  # Uncomment and fill in when ready. Service 1 already reads SERVICE3_URL
+  # from its environment, so no other changes will be needed.
+  #
+  # service3:
+  #   build:
+  #     context: .
+  #     dockerfile: services/service3/Dockerfile
+  #   ports:
+  #     - "${SERVICE3_PORT}:${SERVICE3_PORT}"
+  #   networks:
+  #     - racerhelper
+  #   restart: unless-stopped

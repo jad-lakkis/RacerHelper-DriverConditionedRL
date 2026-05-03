@@ -1,0 +1,18 @@
+# Version control
+.git/
+
+# Python caches and virtual environments
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Large RL training artifacts — not needed inside any container
+linesight/save/
+linesight/tensorboard/
+linesight/maps/
+linesight/.pixi/
+linesight/docs/
+weights-best-runs-data/
+replays/
+setup_scripts/

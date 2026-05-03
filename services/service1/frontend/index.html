@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RacerHelper</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <header class="header">
+      <div class="header-inner">
+        <span class="logo">&#9654; RacerHelper</span>
+        <span class="tagline">Driver-Conditioned RL</span>
+      </div>
+    </header>
+
+    <main class="main">
+
+      <!-- ── Step 1: Race Setup ──────────────────────────────────────── -->
+      <section class="card" id="step-setup">
+        <h2 class="card-title"><span class="step-badge">1</span> Race Setup</h2>
+
+        <div class="form-grid">
+
+          <div class="field">
+            <label for="track-select">Track</label>
+            <select id="track-select">
+              <option value="">Loading tracks…</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="lap-input">Best Lap Time <span class="hint">M:SS.mmm</span></label>
+            <input
+              type="text"
+              id="lap-input"
+              placeholder="1:26.290"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <span class="field-error" id="lap-error"></span>
+          </div>
+
+          <div class="field field--full">
+            <label for="risk-slider">
+              Risk Tolerance
+              <span class="risk-value" id="risk-display">50%</span>
+            </label>
+            <input type="range" id="risk-slider" min="0" max="100" value="50" />
+            <div class="risk-labels">
+              <span>Conservative</span>
+              <span>Balanced</span>
+              <span>Aggressive</span>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ── Step 2: Driver Style ────────────────────────────────────── -->
+      <section class="card" id="step-driver">
+        <h2 class="card-title"><span class="step-badge">2</span> Driver Style</h2>
+        <p class="card-sub">Upload your Trackmania replay to extract your driving profile.</p>
+
+        <label class="upload-btn" id="upload-label">
+          <input type="file" id="replay-file" accept=".Gbx,.gbx" />
+          <span id="upload-text">&#8679; Upload .Replay.Gbx</span>
+        </label>
+
+        <div class="profile-panel" id="profile-panel" aria-hidden="true">
+          <div class="profile-loading" id="profile-loading">
+            <div class="spinner"></div>
+            <span>Analysing replay…</span>
+          </div>
+
+          <div class="profile-results" id="profile-results">
+            <div class="metric">
+              <div class="metric-header">
+                <span class="metric-name">Braking Aggression</span>
+                <span class="metric-value" id="val-braking">—</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill bar-fill--red" id="bar-braking" style="width:0%"></div>
+              </div>
+              <div class="bar-labels"><span>Smooth</span><span>Aggressive</span></div>
+            </div>
+
+            <div class="metric">
+              <div class="metric-header">
+                <span class="metric-name">Oversteer / Understeer</span>
+                <span class="metric-value" id="val-ous">—</span>
+              </div>
+              <div class="bar-track bar-track--centered">
+                <div class="bar-center-line"></div>
+                <div class="bar-fill bar-fill--blue" id="bar-ous" style="width:0%;left:50%"></div>
+              </div>
+              <div class="bar-labels">
+                <span>Understeer</span><span>Neutral</span><span>Oversteer</span>
+              </div>
+            </div>
+
+            <div class="metric">
+              <div class="metric-header">
+                <span class="metric-name">Corner Entry Speed</span>
+                <span class="metric-value" id="val-corner">—</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill bar-fill--green" id="bar-corner" style="width:0%"></div>
+              </div>
+              <div class="bar-labels"><span>Conservative</span><span>Late-braker</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Step 3: Generate ───────────────────────────────────────── -->
+      <section class="card" id="step-generate">
+        <h2 class="card-title"><span class="step-badge">3</span> Generate</h2>
+        <p class="card-sub">Send your hyperparameters to Service 3 and get your replay.</p>
+
+        <button class="generate-btn" id="generate-btn" disabled>
+          Generate Replay
+        </button>
+
+        <div class="generate-result" id="generate-result"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
