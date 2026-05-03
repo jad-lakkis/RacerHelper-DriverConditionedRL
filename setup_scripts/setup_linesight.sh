@@ -119,12 +119,14 @@ export DISPLAY=:1
 export WINEARCH=win32
 export WINEPREFIX=/home/wineuser/.wine
 export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
-export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json
 export WINEDLLOVERRIDES="d3d9=n;d3d11=n;dxgi=n;d3d10core=n"
 
 mkdir -p "$XDG_RUNTIME_DIR"
 
-exec wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TMLoader.exe run TmForever "default" /configstring="set custom_port $1"
+# vglrun bridges VirtualGL so Wine's 32-bit DXVK can reach the NVIDIA GPU.
+# Without it the 64-bit-only VK ICD path causes Vulkan device enumeration to
+# fail inside the 32-bit Wine process, leaving the game windowless.
+exec vglrun wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TMLoader.exe run TmForever "default" /configstring="set custom_port $1"
 EOF
 
 chmod +x "${LINESIGHT_DIR}/scripts/launch_game.sh"

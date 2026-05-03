@@ -66,9 +66,15 @@ if [ ! -d "$LINESIGHT_PATH" ]; then
     exit 1
 fi
 
+FRESH="${FRESH:-0}"
 TRACK_NAME="${TRACK_NAME:-Bahrain}"
 RUN_NAME="${RUN_NAME:-run_$(date +%Y%m%d_%H%M%S)}"
 MAP_BASENAME=$(basename "$MAP_GBX")
+
+CONTAINER_EXISTS=0
+if docker ps -a --format '{{.Names}}' | grep -q '^tmnf$'; then
+    CONTAINER_EXISTS=1
+fi
 
 # Derive VCP file from track name if not set explicitly
 case "$TRACK_NAME" in
@@ -101,96 +107,92 @@ echo "  OUS score    : ${OVERSTEER_UNDERSTEER_SCORE:-0.0}"
 echo "  Corner speed : ${CORNER_ENTRY_SPEED_RATIO:-0.84}"
 echo "============================================================"
 
-# =============================================================
-# STEP 1: Allow X display access from Docker
-# =============================================================
-log "Step 1: Allowing X display access"
-xhost +
-echo "xhost + done."
+xhost + 2>/dev/null || true
 
 # =============================================================
-# STEP 2: Stop and remove any existing tmnf container
+# STEPS 1-4: Full setup — only on first run or FRESH=1
 # =============================================================
-log "Step 2: Cleaning up existing container"
-docker stop tmnf 2>/dev/null || true
-docker rm   tmnf 2>/dev/null || true
-echo "Old container removed (if any)."
+if [ "$FRESH" = "1" ] || [ "$CONTAINER_EXISTS" = "0" ]; then
+    log "Step 1-4: Full container setup"
+    docker stop tmnf 2>/dev/null || true
+    docker rm   tmnf 2>/dev/null || true
+
+    docker run --gpus all -d \
+      --name tmnf \
+      -e DISPLAY=:0 \
+      -e WINEPREFIX=/home/wineuser/.wine \
+      -e HOME=/home/wineuser \
+      -v /tmp/.X11-unix:/tmp/.X11-unix \
+      -v /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
+      --entrypoint bash \
+      tmnf-vulkan:latest -c "
+        while true; do
+          wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TmForever.exe 2>&1 | tee -a /tmp/tmnf.log
+          echo 'Exited \$? - restarting in 3s'
+          sleep 3
+        done
+      "
+    echo "Container started. Waiting for initialization..."
+    sleep 3
+
+    docker exec -u 0 tmnf bash -c "apt-get update -qq && apt-get install -y liblzo2-dev"
+    INSTALL_DEPS=1
+else
+    if ! docker ps --format '{{.Names}}' | grep -q '^tmnf$'; then
+        log "Restarting stopped container (FRESH=1 to force full rebuild)"
+        docker start tmnf
+        sleep 3
+    else
+        log "Reusing running container (FRESH=1 to force full rebuild)"
+    fi
+    INSTALL_DEPS=0
+fi
 
 # =============================================================
-# STEP 3: Start the tmnf container
-# =============================================================
-log "Step 3: Starting tmnf container"
-docker run --gpus all -d \
-  --name tmnf \
-  -e DISPLAY=:0 \
-  -e WINEPREFIX=/home/wineuser/.wine \
-  -e HOME=/home/wineuser \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
-  --entrypoint bash \
-  tmnf-vulkan:latest -c "
-    while true; do
-      wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TmForever.exe 2>&1 | tee -a /tmp/tmnf.log
-      echo 'Exited \$? - restarting in 3s'
-      sleep 3
-    done
-  "
-echo "Container started. Waiting for initialization..."
-sleep 3
-
-# =============================================================
-# STEP 4: Install system dependency liblzo2-dev
-# =============================================================
-log "Step 4: Installing liblzo2-dev inside container"
-docker exec -u 0 tmnf bash -c "apt-get update -qq && apt-get install -y liblzo2-dev"
-echo "liblzo2-dev installed."
-
-# =============================================================
-# STEP 5: Copy custom linesight from this repo into the container
-# This replaces the upstream git clone — we use our own fork.
+# STEP 5: Always copy fresh linesight (code may have changed)
 # =============================================================
 log "Step 5: Copying linesight from $LINESIGHT_PATH into container"
 docker exec -u 0 tmnf bash -c "rm -rf /home/wineuser/linesight"
 docker cp "$LINESIGHT_PATH" tmnf:/home/wineuser/linesight
 docker exec -u 0 tmnf bash -c "chown -R wineuser:wineuser /home/wineuser/linesight"
-echo "linesight copied."
 
 # =============================================================
-# STEP 6: Copy the .Challenge.Gbx map into the container
-# Placed in the Wine TmForever Challenges directory so the
-# game can load it and config.py can reference it by name.
+# STEP 6: Always copy the map GBX
 # =============================================================
 log "Step 6: Copying map '$MAP_BASENAME' into container"
 WINE_CHALLENGES="/home/wineuser/.wine/drive_c/users/wineuser/Documents/TmForever/Tracks/Challenges"
 docker exec -u 0 tmnf bash -c "mkdir -p '$WINE_CHALLENGES'"
 docker cp "$MAP_GBX" "tmnf:$WINE_CHALLENGES/$MAP_BASENAME"
 docker exec -u 0 tmnf bash -c "chown wineuser:wineuser '$WINE_CHALLENGES/$MAP_BASENAME'"
-echo "Map copied to Wine Challenges."
 
 # =============================================================
-# STEP 7: Install linesight + create launch_game.sh + user_config.py
+# STEP 7: Install deps (first run only) + recreate generated files
 # =============================================================
-log "Step 7: Setting up linesight inside container (as wineuser)"
-
-docker exec -u wineuser tmnf bash -c '
+if [ "$INSTALL_DEPS" = "1" ]; then
+    log "Step 7: Installing linesight dependencies"
+    docker exec -u wineuser tmnf bash -c '
 set -euo pipefail
-
-# --- Install uv ---
 if ! command -v uv &>/dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 source $HOME/.local/bin/env
-
-# --- Python 3.11 venv ---
 if [ ! -d /home/wineuser/linesight_env ]; then
     uv python install 3.11
     uv venv ~/linesight_env --python 3.11
 fi
 source ~/linesight_env/bin/activate
-
-# --- Install linesight from the copied source ---
 cd /home/wineuser/linesight
 uv pip install -e .
+echo "Dependencies installed."
+'
+else
+    log "Step 7: Skipping dependency install (container already set up)"
+fi
+
+# Always recreate generated files wiped by the linesight copy
+docker exec -u wineuser tmnf bash -c '
+source $HOME/.local/bin/env
+source ~/linesight_env/bin/activate
 
 # --- Create launch_game.sh ---
 cat > /home/wineuser/linesight/scripts/launch_game.sh << '"'"'EOF'"'"'
@@ -392,16 +394,20 @@ docker exec -u 0 tmnf bash -c "
 # =============================================================
 # STEP 11: Launch TMLoader
 # =============================================================
-log "Step 12: Launching TMLoader"
-docker exec -d -u wineuser tmnf bash -c "
-  export DISPLAY=:0
-  export WINEPREFIX=/home/wineuser/.wine
-  export HOME=/home/wineuser
-  cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
-  wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
-"
-echo "TMLoader launched. Waiting for it to initialize..."
-sleep 5
+if ! docker exec tmnf bash -c "pgrep -f 'TMLoader.exe'" > /dev/null 2>&1; then
+    log "Step 12: Launching TMLoader"
+    docker exec -d -u wineuser tmnf bash -c "
+      export DISPLAY=:0
+      export WINEPREFIX=/home/wineuser/.wine
+      export HOME=/home/wineuser
+      cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
+      wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
+    "
+    echo "Waiting for TMLoader to initialise..."
+    sleep 5
+else
+    log "Step 12: TMLoader already running — skipping"
+fi
 
 # =============================================================
 # STEP 12: Start Linesight RL training

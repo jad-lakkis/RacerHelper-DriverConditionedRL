@@ -4,28 +4,20 @@
 # =============================================================
 # ONE-OFF SCRIPT — generates the initial Bahrain base model.
 #
-# Purpose:
-#   Run a clean training session from scratch on Bahrain Circuit.
-#   When you are happy with the result (Ctrl+C to stop), copy the
-#   5 output files into models/Bahrain/ so that the production
-#   fine-tuning pipeline has a base to start from.
-#
-# This script is NOT part of the production pipeline.
-# It is only used once (or whenever you want to refresh the base).
-#
-# Prerequisites:
-#   - 1_setup_tmnf_docker.sh has been run (tmnf-vulkan:latest exists)
-#   - The Bahrain .Challenge.Gbx file is on this host
-#   - Run on the HOST (user@ubuntu), NOT inside Docker
-#
-# Usage:
-#   chmod +x generate_bahrain_base_model.sh
+# First run (full setup, ~10-15 min):
 #   ./generate_bahrain_base_model.sh
 #
+# Subsequent runs (fast path, ~1-2 min — reuses existing container):
+#   ./generate_bahrain_base_model.sh
+#
+# Force a full rebuild (new container + reinstall everything):
+#   FRESH=1 ./generate_bahrain_base_model.sh
+#
 # Optional env vars:
-#   RACER_HELPER_PATH   repo root (default: two dirs above this script)
-#   BAHRAIN_GBX_PATH    path to Bahrain_Circuit.Challenge.Gbx on this host
-#   GPU_COLLECTORS_COUNT number of parallel game instances (default: 1)
+#   FRESH                   1 = full rebuild, 0 = reuse container (default: 0)
+#   RACER_HELPER_PATH       repo root (default: two dirs above this script)
+#   BAHRAIN_GBX_PATH        path to Bahrain_Circuit.Challenge.Gbx on this host
+#   GPU_COLLECTORS_COUNT    parallel game instances (default: 1)
 #
 # After training — copy results into the repo:
 #   docker cp tmnf:/home/wineuser/linesight/save/bahrain_base/weights1.torch         models/Bahrain/
@@ -42,6 +34,7 @@ log() { echo ""; echo "==== $1 ===="; }
 # =============================================================
 # Variable setup
 # =============================================================
+FRESH="${FRESH:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RACER_HELPER_PATH="${RACER_HELPER_PATH:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 LINESIGHT_PATH="$RACER_HELPER_PATH/linesight"
@@ -64,80 +57,97 @@ if [ ! -f "$BAHRAIN_GBX_PATH" ]; then
     exit 1
 fi
 
+# Check if the container already exists
+CONTAINER_EXISTS=0
+if docker ps -a --format '{{.Names}}' | grep -q '^tmnf$'; then
+    CONTAINER_EXISTS=1
+fi
+
 echo ""
 echo "============================================================"
 echo "  Bahrain Base Model — Training from Scratch"
-echo "============================================================"
+if [ "$FRESH" = "1" ] || [ "$CONTAINER_EXISTS" = "0" ]; then
+echo "  Mode       : FULL SETUP (fresh container)"
+else
+echo "  Mode       : FAST (reusing existing container — FRESH=1 to rebuild)"
+fi
 echo "  Repo root  : $RACER_HELPER_PATH"
 echo "  Map GBX    : $BAHRAIN_GBX_PATH"
 echo "  Run name   : $RUN_NAME  →  save/$RUN_NAME/"
-echo "  VCP file   : $VCP_FILE"
 echo "============================================================"
 
-# =============================================================
-# STEP 1: Allow X display access from Docker
-# =============================================================
-log "Step 1: Allowing X display access"
-xhost +
+xhost + 2>/dev/null || true
 
 # =============================================================
-# STEP 2: Stop and remove any existing tmnf container
+# Full setup path — only runs on first run or FRESH=1
 # =============================================================
-log "Step 2: Cleaning up existing container"
-docker stop tmnf 2>/dev/null || true
-docker rm   tmnf 2>/dev/null || true
+if [ "$FRESH" = "1" ] || [ "$CONTAINER_EXISTS" = "0" ]; then
+
+    log "Cleaning up existing container"
+    docker stop tmnf 2>/dev/null || true
+    docker rm   tmnf 2>/dev/null || true
+
+    log "Starting fresh tmnf container"
+    docker run --gpus all -d \
+      --name tmnf \
+      -e DISPLAY=:0 \
+      -e WINEPREFIX=/home/wineuser/.wine \
+      -e HOME=/home/wineuser \
+      -v /tmp/.X11-unix:/tmp/.X11-unix \
+      -v /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
+      --entrypoint bash \
+      tmnf-vulkan:latest -c "
+        while true; do
+          wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TmForever.exe 2>&1 | tee -a /tmp/tmnf.log
+          echo 'Exited \$? - restarting in 3s'
+          sleep 3
+        done
+      "
+    echo "Waiting for container to initialise..."
+    sleep 3
+
+    log "Installing liblzo2-dev"
+    docker exec -u 0 tmnf bash -c "apt-get update -qq && apt-get install -y liblzo2-dev"
+
+    INSTALL_DEPS=1
+
+else
+    # ── Fast path ─────────────────────────────────────────────
+    if ! docker ps --format '{{.Names}}' | grep -q '^tmnf$'; then
+        log "Container exists but is stopped — restarting it"
+        docker start tmnf
+        sleep 3
+    else
+        log "Container already running — skipping setup"
+    fi
+
+    INSTALL_DEPS=0
+fi
 
 # =============================================================
-# STEP 3: Start the tmnf container
+# Always: copy fresh linesight and the map GBX
+# (linesight code may have changed between runs)
 # =============================================================
-log "Step 3: Starting tmnf container"
-docker run --gpus all -d \
-  --name tmnf \
-  -e DISPLAY=:0 \
-  -e WINEPREFIX=/home/wineuser/.wine \
-  -e HOME=/home/wineuser \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v /usr/share/vulkan/icd.d:/usr/share/vulkan/icd.d:ro \
-  --entrypoint bash \
-  tmnf-vulkan:latest -c "
-    while true; do
-      wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TmForever.exe 2>&1 | tee -a /tmp/tmnf.log
-      echo 'Exited \$? - restarting in 3s'
-      sleep 3
-    done
-  "
-echo "Container started. Waiting for initialization..."
-sleep 3
-
-# =============================================================
-# STEP 4: Install liblzo2-dev
-# =============================================================
-log "Step 4: Installing liblzo2-dev"
-docker exec -u 0 tmnf bash -c "apt-get update -qq && apt-get install -y liblzo2-dev"
-
-# =============================================================
-# STEP 5: Copy linesight from repo into container
-# =============================================================
-log "Step 5: Copying linesight from $LINESIGHT_PATH"
+log "Copying linesight from repo"
 docker exec -u 0 tmnf bash -c "rm -rf /home/wineuser/linesight"
 docker cp "$LINESIGHT_PATH" tmnf:/home/wineuser/linesight
 docker exec -u 0 tmnf bash -c "chown -R wineuser:wineuser /home/wineuser/linesight"
 
-# =============================================================
-# STEP 6: Copy Bahrain map into the Wine Challenges directory
-# =============================================================
-log "Step 6: Copying Bahrain map into container"
+log "Copying Bahrain map into container"
 WINE_CHALLENGES="/home/wineuser/.wine/drive_c/users/wineuser/Documents/TmForever/Tracks/Challenges"
 docker exec -u 0 tmnf bash -c "mkdir -p '$WINE_CHALLENGES'"
 docker cp "$BAHRAIN_GBX_PATH" "tmnf:$WINE_CHALLENGES/$MAP_BASENAME"
 docker exec -u 0 tmnf bash -c "chown wineuser:wineuser '$WINE_CHALLENGES/$MAP_BASENAME'"
 
 # =============================================================
-# STEP 7: Install linesight + create launch_game.sh + user_config.py
+# Install Python env + linesight on first run only
+# On subsequent runs: skip pip install, just recreate the
+# generated config files that were wiped by the linesight copy
 # =============================================================
-log "Step 7: Setting up linesight inside container"
+if [ "$INSTALL_DEPS" = "1" ]; then
 
-docker exec -u wineuser tmnf bash -c '
+    log "Installing linesight + dependencies (first run — this takes a while)"
+    docker exec -u wineuser tmnf bash -c '
 set -euo pipefail
 
 if ! command -v uv &>/dev/null; then
@@ -153,6 +163,21 @@ source ~/linesight_env/bin/activate
 
 cd /home/wineuser/linesight
 uv pip install -e .
+
+echo "Dependencies installed."
+'
+
+fi
+
+# =============================================================
+# Always: recreate generated files that live inside linesight/
+# (they were wiped when we copied fresh linesight above)
+# =============================================================
+log "Creating launch_game.sh and user_config.py"
+docker exec -u wineuser tmnf bash -c '
+set -euo pipefail
+source $HOME/.local/bin/env
+source ~/linesight_env/bin/activate
 
 cat > /home/wineuser/linesight/scripts/launch_game.sh << '"'"'EOF'"'"'
 #!/bin/bash
@@ -189,15 +214,12 @@ import platform
 is_linux = platform.system() == \"Linux\"
 " >> /home/wineuser/linesight/config_files/config.py
 fi
-
-echo "Linesight setup complete."
 '
 
 # =============================================================
-# STEP 8: Patch config.py — run_name, map_cycle, collectors
-#         Driver conditioning params are left at config defaults.
+# Always: patch config.py
 # =============================================================
-log "Step 8: Patching config.py"
+log "Patching config.py"
 
 PATCH_SCRIPT=$(mktemp /tmp/patch_config_XXXXXX.py)
 cat > "$PATCH_SCRIPT" << 'PYEOF'
@@ -232,8 +254,8 @@ content = re.sub(
 )
 
 # ── map_cycle ─────────────────────────────────────────────────
-# Use repeat() format so analyze_map_cycle's chain(*map_cycle)
-# receives iterables of tuples, not raw tuples.
+# Use repeat() so analyze_map_cycle's chain(*map_cycle) receives
+# iterables of tuples, not raw tuple elements.
 track = "Bahrain"
 wpath = "Bahrain_Circuit.Challenge.Gbx"
 vcp   = "Bahrain_Circuit_0.5m_jadlakkisjad_012629.npy"
@@ -244,7 +266,6 @@ new_cycle = (
     f'    repeat(("{track}", \'"My Challenges/{wpath}"\', "{vcp}", False, True), 1),\n'
     "]"
 )
-# \s* before \] handles indented closing brackets
 content = re.sub(
     r"map_cycle\s*=\s*\[.*?\n\s*\]",
     new_cycle,
@@ -273,20 +294,17 @@ docker exec -u wineuser \
   "
 
 # =============================================================
-# STEP 9: Fix ownership
+# Always: fix ownership
 # =============================================================
-log "Step 9: Fixing ownership"
+log "Fixing ownership"
 docker exec -u 0 tmnf bash -c "
-  if [ -d /home/wineuser/.triton ]; then
-    chown -R wineuser:wineuser /home/wineuser/.triton
-  fi
+  [ -d /home/wineuser/.triton ] && chown -R wineuser:wineuser /home/wineuser/.triton || true
   chown -R wineuser:wineuser /home/wineuser
 "
 
 # =============================================================
-# STEP 10: Create XDG runtime dir
+# Always: XDG runtime dir
 # =============================================================
-log "Step 10: Creating XDG runtime dir"
 docker exec -u 0 tmnf bash -c "
   mkdir -p /tmp/runtime-wineuser
   chown wineuser:wineuser /tmp/runtime-wineuser
@@ -294,23 +312,27 @@ docker exec -u 0 tmnf bash -c "
 "
 
 # =============================================================
-# STEP 11: Launch TMLoader
+# Launch TMLoader only if not already running in the container
 # =============================================================
-log "Step 11: Launching TMLoader"
-docker exec -d -u wineuser tmnf bash -c "
-  export DISPLAY=:0
-  export WINEPREFIX=/home/wineuser/.wine
-  export HOME=/home/wineuser
-  cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
-  wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
-"
-echo "Waiting for TMLoader to initialise..."
-sleep 5
+if ! docker exec tmnf bash -c "pgrep -f 'TMLoader.exe'" > /dev/null 2>&1; then
+    log "Launching TMLoader"
+    docker exec -d -u wineuser tmnf bash -c "
+      export DISPLAY=:0
+      export WINEPREFIX=/home/wineuser/.wine
+      export HOME=/home/wineuser
+      cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
+      wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
+    "
+    echo "Waiting for TMLoader to initialise..."
+    sleep 5
+else
+    log "TMLoader already running — skipping"
+fi
 
 # =============================================================
-# STEP 12: Start training
+# Start training
 # =============================================================
-log "Step 12: Starting Linesight RL training (Bahrain — scratch)"
+log "Starting Linesight RL training (Bahrain — scratch)"
 echo ""
 echo "============================================================"
 echo "  Bahrain Base Model Training"
