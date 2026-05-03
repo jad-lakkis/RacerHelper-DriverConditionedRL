@@ -242,9 +242,9 @@ humanlike_accel_tap_penalty_schedule = [(0, -0.05)]
 
 ---
 
-## 14) Corner Entry Speed Reward
+## 14) Corner Entry Speed Conditioning
 
-The system adds a sparse reward term for **corner entry speed**, using a target ratio `ρ ∈ [0, 1]` where:
+The system conditions the driver profile on **corner entry speed** through a sparse reward term, using a target ratio `ρ ∈ [0, 1]` where:
 
 ```
 ρ = median corner-entry speed / peak speed
@@ -258,7 +258,7 @@ The system adds a sparse reward term for **corner entry speed**, using a target 
 | **Corner detection** | A corner entry is detected when the curvature proxy `κ = \|yaw_rate_y\| / max(\|v_fwd\|, 1.0)` crosses the `0.010 1/m` threshold. |
 | **Reward signal** | At each detected entry, a penalty is applied: `r = coeff × (entry_ratio − ρ)²`. Since `coeff` is negative, mismatched entry speed is penalized. |
 
-This is applied during buffer construction; it does not add a new network input.
+This conditioning is applied during buffer construction; it does not add a new network input.
 
 ### Configuration
 
