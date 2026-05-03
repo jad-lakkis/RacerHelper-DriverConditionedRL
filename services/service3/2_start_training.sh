@@ -14,12 +14,13 @@
 #   5.  Copies custom linesight from this repo into the container
 #   6.  Copies the .Challenge.Gbx map into the container
 #   7.  Installs linesight + dependencies inside the container
-#   8.  Creates launch_game.sh and user_config.py
+#   8.  Creates launch_game.sh (with correct DISPLAY) and user_config.py
 #   9.  Patches config.py with map path and driver hyperparameters
-#  10.  Fixes ownership issues
-#  11.  Creates XDG runtime dir
-#  12.  Launches TMLoader (the game)
-#  13.  Starts Linesight RL training
+#  10.  Copies base model weights into container
+#  11.  Fixes ownership issues
+#  12.  Creates XDG runtime dir
+#  13.  Launches TMLoader (the game)
+#  14.  Starts Linesight RL training
 #
 # Prerequisites:
 #   - Script 1 has been run (tmnf-vulkan:latest exists)
@@ -31,14 +32,15 @@
 #   ./2_start_training.sh <path/to/map.Challenge.Gbx>
 #
 # Environment variables (optional — all have defaults):
-#   RACER_HELPER_PATH        Path to repo root (default: parent of this script's dir)
-#   TRACK_NAME               Track name matching linesight config (default: Bahrain)
-#   VCP_FILE                 VCP .npy filename in linesight/maps/ (auto-derived from TRACK_NAME)
-#   GPU_COLLECTORS_COUNT     Game instances to run in parallel (default: 1)
-#   BRAKING_AGGRESSION       [0,1]  (default: 0.5)
-#   RISK_TOLERANCE           [0,1]  (default: 0.2)
+#   RACER_HELPER_PATH          Path to repo root (default: 2 levels above this script)
+#   TRACK_NAME                 Track name matching linesight config (default: Bahrain)
+#   VCP_FILE                   VCP .npy filename (auto-derived from TRACK_NAME)
+#   GPU_COLLECTORS_COUNT       Game instances in parallel (default: 1)
+#   BRAKING_AGGRESSION         [0,1]  (default: 0.5)
+#   RISK_TOLERANCE             [0,1]  (default: 0.2)
 #   OVERSTEER_UNDERSTEER_SCORE [-5,5] (default: 0.0)
-#   CORNER_ENTRY_SPEED_RATIO [0,1]  (default: 0.84)
+#   CORNER_ENTRY_SPEED_RATIO   [0,1]  (default: 0.84)
+#   FRESH                      Set to 1 to force full container rebuild (default: 0)
 # =============================================================
 
 set -euo pipefail
@@ -55,7 +57,6 @@ if [ ! -f "$MAP_GBX" ]; then
     exit 1
 fi
 
-# Default repo root: two levels above this script (services/service3/ → repo root)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RACER_HELPER_PATH="${RACER_HELPER_PATH:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 LINESIGHT_PATH="$RACER_HELPER_PATH/linesight"
@@ -112,7 +113,6 @@ xhost + 2>/dev/null || true
 # =============================================================
 # STEPS 1-4: Full setup — only on first run or FRESH=1
 # =============================================================
-
 if [ "$FRESH" = "1" ] || [ "$CONTAINER_EXISTS" = "0" ]; then
     log "Step 1-4: Full container setup"
     docker stop tmnf 2>/dev/null || true
@@ -140,18 +140,17 @@ if [ "$FRESH" = "1" ] || [ "$CONTAINER_EXISTS" = "0" ]; then
     INSTALL_DEPS=1
 else
     if ! docker ps --format '{{.Names}}' | grep -q '^tmnf$'; then
-        log "Restarting stopped container (FRESH=1 to force full rebuild)"
+        log "Restarting stopped container (use FRESH=1 to force full rebuild)"
         docker start tmnf
         sleep 3
     else
-        log "Reusing running container (FRESH=1 to force full rebuild)"
+        log "Reusing running container (use FRESH=1 to force full rebuild)"
     fi
     INSTALL_DEPS=0
 fi
 
 # =============================================================
-# Always: detect display — use host X11 if available,
-# otherwise start Xvfb inside the container (headless/vast.ai)
+# Detect display — use host X11 if available, else Xvfb
 # =============================================================
 log "Setting up display"
 
@@ -193,6 +192,8 @@ docker exec -u 0 tmnf bash -c "chown wineuser:wineuser '$WINE_CHALLENGES/$MAP_BA
 
 # =============================================================
 # STEP 7: Install deps (first run only) + recreate generated files
+# NOTE: WINE_DISPLAY is baked into launch_game.sh so the game
+# always opens on the correct display.
 # =============================================================
 if [ "$INSTALL_DEPS" = "1" ]; then
     log "Step 7: Installing linesight dependencies"
@@ -215,25 +216,28 @@ else
     log "Step 7: Skipping dependency install (container already set up)"
 fi
 
-# Always recreate generated files wiped by the linesight copy
-docker exec -u wineuser tmnf bash -c '
+# Always recreate launch_game.sh and user_config.py
+# (wiped when linesight folder was replaced in Step 5)
+docker exec -u wineuser -e WINE_DISPLAY="$WINE_DISPLAY" tmnf bash -c '
 source $HOME/.local/bin/env
 source ~/linesight_env/bin/activate
 
-# --- Create launch_game.sh ---
-cat > /home/wineuser/linesight/scripts/launch_game.sh << '"'"'EOF'"'"'
+# --- Create launch_game.sh with correct DISPLAY ---
+cat > /home/wineuser/linesight/scripts/launch_game.sh << LAUNCHEOF
 #!/bin/bash
+export DISPLAY=${WINE_DISPLAY}
 export WINEARCH=win32
 export WINEPREFIX=/home/wineuser/.wine
 export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
 export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
 export WINEDLLOVERRIDES="d3d9=n;d3d11=n;dxgi=n;d3d10core=n"
 
-mkdir -p "$XDG_RUNTIME_DIR"
+mkdir -p "\$XDG_RUNTIME_DIR"
 
-exec wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TMLoader.exe run TmForever "default" /configstring="set custom_port $1"
-EOF
+exec wine /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever/TMLoader.exe run TmForever "default" /configstring="set custom_port \$1"
+LAUNCHEOF
 chmod +x /home/wineuser/linesight/scripts/launch_game.sh
+echo "launch_game.sh created with DISPLAY=${WINE_DISPLAY}"
 
 # --- Create user_config.py ---
 cat > /home/wineuser/linesight/config_files/user_config.py << '"'"'PYEOF'"'"'
@@ -265,8 +269,6 @@ echo "Linesight setup complete."
 
 # =============================================================
 # STEP 8: Patch config.py with map path and driver hyperparams
-# A small Python script handles the multi-line map_cycle block
-# cleanly — sed would be fragile here.
 # =============================================================
 log "Step 8: Patching config.py"
 
@@ -282,7 +284,6 @@ with open(CONFIG) as f:
     content = f.read()
 
 # ── Scalar driver conditioning params ────────────────────────
-# Numeric scalar params
 for key, env_var, default in [
     ("braking_aggression",         "BRAKING_AGGRESSION",         "0.5"),
     ("risk_tolerance",             "RISK_TOLERANCE",             "0.2"),
@@ -308,8 +309,6 @@ content = re.sub(
 )
 
 # ── map_cycle ─────────────────────────────────────────────────
-# Use repeat() format so analyze_map_cycle's chain(*map_cycle)
-# receives iterables of tuples, not raw tuples.
 track = os.environ.get("TRACK_NAME",    "map")
 wpath = os.environ.get("MAP_WINE_PATH", "current_map.Challenge.Gbx")
 vcp   = os.environ.get("VCP_FILE",      "")
@@ -320,7 +319,6 @@ new_cycle = (
     f'    repeat(("{track}", \'"My Challenges/{wpath}"\', "{vcp}", False, True), 1),\n'
     "]"
 )
-# \s* before \] handles indented closing brackets
 content = re.sub(
     r"map_cycle\s*=\s*\[.*?\n\s*\]",
     new_cycle,
@@ -357,16 +355,12 @@ docker exec -u wineuser \
 
 # =============================================================
 # STEP 9: Copy base model weights into container
-# The models/ folder in the repo holds one pair of weights per
-# track. Training fine-tunes from these rather than starting
-# from a random initialisation.
 # =============================================================
 log "Step 9: Loading base model snapshot for track '$TRACK_NAME' → save/$RUN_NAME/"
 MODELS_PATH="${MODELS_PATH:-$RACER_HELPER_PATH/models}"
 BASE_MODEL_DIR="$MODELS_PATH/$TRACK_NAME"
 SAVE_SUBDIR="/home/wineuser/linesight/save/$RUN_NAME"
 
-# The full snapshot: weights, optimizer, scaler, accumulated_stats
 BASE_MODEL_FILES=(
     "weights1.torch"
     "weights2.torch"
@@ -407,7 +401,7 @@ docker exec -u 0 tmnf bash -c "
 "
 
 # =============================================================
-# STEP 10: Create XDG runtime dir
+# STEP 11: Create XDG runtime dir
 # =============================================================
 log "Step 11: Creating XDG runtime dir"
 docker exec -u 0 tmnf bash -c "
@@ -417,8 +411,7 @@ docker exec -u 0 tmnf bash -c "
 "
 
 # =============================================================
-# STEP 11: Launch TMLoader — always restart when using Xvfb so
-# any previously running instance (wrong display) is replaced.
+# STEP 12: Launch TMLoader
 # =============================================================
 if [ "$WINE_DISPLAY" = ":99" ]; then
     log "Step 12: Restarting TMLoader with Xvfb display $WINE_DISPLAY"
@@ -451,7 +444,7 @@ else
 fi
 
 # =============================================================
-# STEP 12: Start Linesight RL training
+# STEP 13: Start Linesight RL training
 # =============================================================
 log "Step 13: Starting Linesight RL training"
 echo ""
@@ -461,7 +454,7 @@ echo "============================================================"
 echo "  IMPORTANT: Check the VNC/web desktop."
 echo "  If there is a 'Stay offline' popup, click it to dismiss."
 echo ""
-echo "  Monitoring commands (new terminal):"
+echo "  Monitoring commands (open a new terminal):"
 echo "    nvidia-smi"
 echo "    docker exec tmnf cat /tmp/tmnf.log"
 echo "    docker exec tmnf cat /tmp/tmloader.log"
