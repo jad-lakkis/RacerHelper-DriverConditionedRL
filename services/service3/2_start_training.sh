@@ -185,7 +185,7 @@ docker exec -u 0 tmnf bash -c "chown -R wineuser:wineuser /home/wineuser/linesig
 # STEP 6: Always copy the map GBX
 # =============================================================
 log "Step 6: Copying map '$MAP_BASENAME' into container"
-WINE_CHALLENGES="/home/wineuser/.wine/drive_c/users/wineuser/Documents/TmForever/Tracks/Challenges"
+WINE_CHALLENGES="/home/wineuser/.wine/drive_c/users/wineuser/Documents/TmForever/Tracks/Challenges/My Challenges"
 docker exec -u 0 tmnf bash -c "mkdir -p '$WINE_CHALLENGES'"
 docker cp "$MAP_GBX" "tmnf:$WINE_CHALLENGES/$MAP_BASENAME"
 docker exec -u 0 tmnf bash -c "chown wineuser:wineuser '$WINE_CHALLENGES/$MAP_BASENAME'"
