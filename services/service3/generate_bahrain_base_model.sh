@@ -232,18 +232,21 @@ content = re.sub(
 )
 
 # ── map_cycle ─────────────────────────────────────────────────
+# Use repeat() format so analyze_map_cycle's chain(*map_cycle)
+# receives iterables of tuples, not raw tuples.
 track = "Bahrain"
 wpath = "Bahrain_Circuit.Challenge.Gbx"
 vcp   = "Bahrain_Circuit_0.5m_jadlakkisjad_012629.npy"
 
 new_cycle = (
     "map_cycle = [\n"
-    f'    *([("{track}", \'"My Challenges/{wpath}"\', "{vcp}", True,  True)] * 4),\n'
-    f'    *([("{track}", \'"My Challenges/{wpath}"\', "{vcp}", False, True)] * 1),\n'
+    f'    repeat(("{track}", \'"My Challenges/{wpath}"\', "{vcp}", True,  True), 4),\n'
+    f'    repeat(("{track}", \'"My Challenges/{wpath}"\', "{vcp}", False, True), 1),\n'
     "]"
 )
+# \s* before \] handles indented closing brackets
 content = re.sub(
-    r"map_cycle\s*=\s*\[.*?\n\]",
+    r"map_cycle\s*=\s*\[.*?\n\s*\]",
     new_cycle,
     content,
     flags=re.DOTALL,
