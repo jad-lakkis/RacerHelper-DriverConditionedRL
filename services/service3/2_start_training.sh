@@ -112,6 +112,7 @@ xhost + 2>/dev/null || true
 # =============================================================
 # STEPS 1-4: Full setup — only on first run or FRESH=1
 # =============================================================
+
 if [ "$FRESH" = "1" ] || [ "$CONTAINER_EXISTS" = "0" ]; then
     log "Step 1-4: Full container setup"
     docker stop tmnf 2>/dev/null || true
@@ -147,6 +148,31 @@ else
     fi
     INSTALL_DEPS=0
 fi
+
+# =============================================================
+# Always: detect display — use host X11 if available,
+# otherwise start Xvfb inside the container (headless/vast.ai)
+# =============================================================
+log "Setting up display"
+
+if docker exec tmnf bash -c "DISPLAY=:0 xdpyinfo" > /dev/null 2>&1; then
+    WINE_DISPLAY=":0"
+    echo "Host X11 display :0 is reachable — using it"
+else
+    WINE_DISPLAY=":99"
+    echo "Host display :0 not reachable — using Xvfb :99 inside container"
+    if ! docker exec tmnf bash -c "pgrep -f 'Xvfb :99'" > /dev/null 2>&1; then
+        docker exec -u 0 tmnf bash -c "
+            Xvfb :99 -screen 0 1920x1080x24 -ac &
+            sleep 2
+            echo 'Xvfb :99 started'
+        "
+    else
+        echo "Xvfb :99 already running"
+    fi
+fi
+
+echo "WINE_DISPLAY=$WINE_DISPLAY"
 
 # =============================================================
 # STEP 5: Always copy fresh linesight (code may have changed)
@@ -197,7 +223,6 @@ source ~/linesight_env/bin/activate
 # --- Create launch_game.sh ---
 cat > /home/wineuser/linesight/scripts/launch_game.sh << '"'"'EOF'"'"'
 #!/bin/bash
-export DISPLAY=:0
 export WINEARCH=win32
 export WINEPREFIX=/home/wineuser/.wine
 export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
@@ -392,14 +417,30 @@ docker exec -u 0 tmnf bash -c "
 "
 
 # =============================================================
-# STEP 11: Launch TMLoader
+# STEP 11: Launch TMLoader — always restart when using Xvfb so
+# any previously running instance (wrong display) is replaced.
 # =============================================================
-if ! docker exec tmnf bash -c "pgrep -f 'TMLoader.exe'" > /dev/null 2>&1; then
-    log "Step 12: Launching TMLoader"
+if [ "$WINE_DISPLAY" = ":99" ]; then
+    log "Step 12: Restarting TMLoader with Xvfb display $WINE_DISPLAY"
+    docker exec -u 0 tmnf bash -c "pkill -f 'TMLoader.exe' 2>/dev/null || true"
+    sleep 2
     docker exec -d -u wineuser tmnf bash -c "
-      export DISPLAY=:0
+      export DISPLAY=$WINE_DISPLAY
       export WINEPREFIX=/home/wineuser/.wine
       export HOME=/home/wineuser
+      export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
+      cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
+      wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
+    "
+    echo "Waiting for TMLoader to initialise..."
+    sleep 5
+elif ! docker exec tmnf bash -c "pgrep -f 'TMLoader.exe'" > /dev/null 2>&1; then
+    log "Step 12: Launching TMLoader"
+    docker exec -d -u wineuser tmnf bash -c "
+      export DISPLAY=$WINE_DISPLAY
+      export WINEPREFIX=/home/wineuser/.wine
+      export HOME=/home/wineuser
+      export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
       cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
       wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
     "
@@ -432,7 +473,7 @@ echo ""
 docker exec -it -u wineuser tmnf bash -c "
   source /home/wineuser/.local/bin/env
   source /home/wineuser/linesight_env/bin/activate
-  export DISPLAY=:0
+  export DISPLAY=$WINE_DISPLAY
   export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
   cd /home/wineuser/linesight
   python scripts/train.py
