@@ -125,6 +125,31 @@ else
 fi
 
 # =============================================================
+# Always: detect display — use host X11 if available,
+# otherwise start Xvfb inside the container (headless/vast.ai)
+# =============================================================
+log "Setting up display"
+
+if docker exec tmnf bash -c "DISPLAY=:0 xdpyinfo" > /dev/null 2>&1; then
+    WINE_DISPLAY=":0"
+    echo "Host X11 display :0 is reachable — using it"
+else
+    WINE_DISPLAY=":99"
+    echo "Host display :0 not reachable — using Xvfb :99 inside container"
+    if ! docker exec tmnf bash -c "pgrep -f 'Xvfb :99'" > /dev/null 2>&1; then
+        docker exec -u 0 tmnf bash -c "
+            Xvfb :99 -screen 0 1920x1080x24 -ac &
+            sleep 2
+            echo 'Xvfb :99 started'
+        "
+    else
+        echo "Xvfb :99 already running"
+    fi
+fi
+
+echo "WINE_DISPLAY=$WINE_DISPLAY"
+
+# =============================================================
 # Always: copy fresh linesight and the map GBX
 # (linesight code may have changed between runs)
 # =============================================================
@@ -172,6 +197,8 @@ fi
 # =============================================================
 # Always: recreate generated files that live inside linesight/
 # (they were wiped when we copied fresh linesight above)
+# DISPLAY is intentionally omitted from launch_game.sh so it
+# inherits the value set by the training process at runtime.
 # =============================================================
 log "Creating launch_game.sh and user_config.py"
 docker exec -u wineuser tmnf bash -c '
@@ -181,7 +208,6 @@ source ~/linesight_env/bin/activate
 
 cat > /home/wineuser/linesight/scripts/launch_game.sh << '"'"'EOF'"'"'
 #!/bin/bash
-export DISPLAY=:0
 export WINEARCH=win32
 export WINEPREFIX=/home/wineuser/.wine
 export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
@@ -312,14 +338,31 @@ docker exec -u 0 tmnf bash -c "
 "
 
 # =============================================================
-# Launch TMLoader only if not already running in the container
+# Launch TMLoader — always restart when using Xvfb so any
+# previously running instance (wrong display) is replaced.
+# On host-display mode, skip if already running.
 # =============================================================
-if ! docker exec tmnf bash -c "pgrep -f 'TMLoader.exe'" > /dev/null 2>&1; then
-    log "Launching TMLoader"
+if [ "$WINE_DISPLAY" = ":99" ]; then
+    log "Restarting TMLoader with Xvfb display $WINE_DISPLAY"
+    docker exec -u 0 tmnf bash -c "pkill -f 'TMLoader.exe' 2>/dev/null || true"
+    sleep 2
     docker exec -d -u wineuser tmnf bash -c "
-      export DISPLAY=:0
+      export DISPLAY=$WINE_DISPLAY
       export WINEPREFIX=/home/wineuser/.wine
       export HOME=/home/wineuser
+      export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
+      cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
+      wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
+    "
+    echo "Waiting for TMLoader to initialise..."
+    sleep 5
+elif ! docker exec tmnf bash -c "pgrep -f 'TMLoader.exe'" > /dev/null 2>&1; then
+    log "Launching TMLoader"
+    docker exec -d -u wineuser tmnf bash -c "
+      export DISPLAY=$WINE_DISPLAY
+      export WINEPREFIX=/home/wineuser/.wine
+      export HOME=/home/wineuser
+      export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
       cd /home/wineuser/.wine/drive_c/Program_Files_x86/TmNationsForever
       wine TMLoader.exe 2>&1 >> /tmp/tmloader.log
     "
@@ -337,6 +380,7 @@ echo ""
 echo "============================================================"
 echo "  Bahrain Base Model Training"
 echo "  Saves to: save/$RUN_NAME/ inside the container"
+echo "  Display  : $WINE_DISPLAY"
 echo ""
 echo "  Press Ctrl+C when satisfied with the result."
 echo ""
@@ -352,7 +396,7 @@ echo ""
 docker exec -it -u wineuser tmnf bash -c "
   source /home/wineuser/.local/bin/env
   source /home/wineuser/linesight_env/bin/activate
-  export DISPLAY=:0
+  export DISPLAY=$WINE_DISPLAY
   export XDG_RUNTIME_DIR=/tmp/runtime-wineuser
   cd /home/wineuser/linesight
   python scripts/train.py
