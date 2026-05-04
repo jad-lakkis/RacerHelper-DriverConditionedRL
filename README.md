@@ -8,6 +8,30 @@ The system is designed for **Trackmania** and produces a driver-specific “best
 
 ---
 
+## Repository Layout
+
+```
+RacerHelper-DriverConditionedRL/
+├── linesight/                  # RL engine (forked from linesight)
+│   ├── config_files/           # Training config — edit config.py to set driver profile
+│   ├── trackmania_rl/          # RL core: agents, buffer, reward shaping, TMI interface
+│   ├── scripts/
+│   │   ├── train.py            # Training entry point
+│   │   └── extract_driver_profile.py  # Parse a replay → driver config values
+│   ├── custom_maps/            # Track .Gbx files
+│   └── maps/                   # Preprocessed .npy map data
+├── services/
+│   ├── service1/               # Frontend + backend
+│   ├── service2/               # Driver profile API (FastAPI)
+│   └── service3/               # Training orchestration + TMNF Docker scripts
+├── models/                     # Saved weights per track (Bahrain, Hockolicious, …)
+├── replays/                    # Driver .Replay.Gbx files used for profiling
+├── setup_scripts/              # One-time setup for linesight and TMNF
+└── docker-compose.yml
+```
+
+---
+
 ## 1) Problem Definition
 
 ### What is the real-world problem being solved?
