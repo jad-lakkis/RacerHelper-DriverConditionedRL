@@ -11,7 +11,8 @@ No epsilon check. No Service 2 communication.
 
 Start with:
     pip install fastapi uvicorn httpx
-    uvicorn main:app --host 0.0.0.0 --port 8001
+    /home/user/.local/bin/uvicorn main:app --host 0.0.0.0 --port 8003
+
 
 Environment variables (all optional):
     POLL_INTERVAL_MINUTES   How often to check for new runs (default: 10)
