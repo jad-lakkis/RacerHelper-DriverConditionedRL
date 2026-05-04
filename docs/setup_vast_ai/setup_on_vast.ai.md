@@ -10,6 +10,8 @@ using this template: https://cloud.vast.ai?ref_id=522317&template_id=c84729a80aa
 
 and using a GPU RTX 4090, 
 
+IMPORTANT note this is not directly dockertized since we need to enter the container for each request, so the setup of docker inside docker is not trivial becasue we need to launch the docker-tmnf container (and enter in it to launch the trainig script) [Training_script_for_each_request](../../services/service3/2_start_training.sh)
+
 and run the following steps: 
 
 ssh -p <PORT> user@<IP_ADDRESS>

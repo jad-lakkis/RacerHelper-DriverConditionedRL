@@ -27,6 +27,10 @@ Browser
 Service 1 is the only public-facing service. The browser never talks to Service 2 or 3 directly — Service 1 proxies everything.
 
 
+
+## 0) .env setup 
+just remove the .env.example and call it .env and make sure to set the SERVICE3_URL to the IP and port of your service3 instance on vast.ai (after you set it up following the guide in the next section)
+
 ## 1) Setup of Vast.ai for Service 3
 SERVICE3 SETUP MUST BE RUN FIRST BECAUSE it requires setting up SERVICE3_URL=IP_ADDRESS:PORT in the .env file for service1 and service2 to connect to it. 
 
