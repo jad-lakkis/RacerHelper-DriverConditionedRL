@@ -30,6 +30,13 @@ To our knowledge, Linesight is by far the most advanced AI in Trackmania. It was
 
 Now that the project is open-source, can you help make it even stronger?
 
+## RacerHelper Extensions
+
+This repository builds on top of Linesight to produce a **personalized, human-achievable ghost** for a specific driver. The following documentation covers what we added:
+
+- **[Linesight Technical Reference](../docs/linesight-technical.md)** — Full technical deep-dive into the original Linesight architecture (sections 1–22): multiprocessing, game interaction, IQN algorithm, mini-race logic, neural network, hyperparameters.
+- **[RacerHelper Extensions](../docs/racerhelper-extensions.md)** — What we built on top: human-likeness penalties, braking aggression conditioning, and risk tolerance conditioning (sections 23–25).
+
 [doc-link]: https://linesight-rl.github.io/linesight/build/html/
 [discord-link]:       https://discord.gg/PvWYGkGKqd
 

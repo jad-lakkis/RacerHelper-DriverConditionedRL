@@ -5,7 +5,7 @@
 It helps drivers improve faster by showing the **best line they can actually execute**, not the best line a robot could execute.
 
 The system is designed for **Trackmania** and produces a driver-specific “best version” ghost plus actionable feedback.
-
+It is a deep reinforcement learning system that trains an AI agent to drive Trackmania Nations Forever at superhuman speeds, then generates a personalized ghost replay that mirrors a specific human driver's style. We use linesight as our base model , and we fine tune it to the target driver's profile. The agent uses an Implicit Quantile Network (IQN) to learn the full distribution of expected returns, while a set of conditioning variables — braking aggression, risk tolerance, and human-likeness penalties — constrain and shape its behavior to match a target driver profile rather than a robotic optimum.
 ---
 
 ## Repository Layout
@@ -34,289 +34,130 @@ RacerHelper-DriverConditionedRL/
 
 ## 1) Problem Definition
 
-### What is the real-world problem being solved?
-Professional and competitive drivers want to improve lap time, but each driver has a different:
-- driving style (aggressiveness, smoothness, braking behavior),
-- execution limits (reaction time, consistency),
-- risk tolerance (how close they are willing to drive to the limit).
-
-Existing “ideal” lines or perfect ghost laps are often unrealistic because they assume robot-like execution:
-perfect braking points, perfect steering, no fatigue, and no reaction delay.
-
-### What makes it a real problem?
-In practice, drivers:
-- miss braking points by milliseconds,
-- oversteer/understeer,
-- react differently under pressure,
-- cannot consistently execute a single theoretical optimum.
-
-This creates a real performance gap between:
-- the **theoretical best lap**, and
-- the **best lap a specific human driver can realistically achieve**.
-
-Racer Helper addresses this gap by producing the **best realistic lap time and line** for a specific driver, conditioned on that driver’s style and risk preference.
-
----
-
-## 2) Who Would Deploy / Pay for This System?
-
-### Primary customer (initial target)
-- **Competitive Trackmania drivers**
-
-### Potential stakeholders (later expansion)
-- real drivers and racing coaches (concept extension),
-- karting training centers (future adaptation),
-- esports racers and sim-racing players.
-
-### Value proposition
-- faster improvement,
-- reduced training time,
-- personalized feedback (where the driver loses time and what to improve).
-
----
-
-## 3) Proposed Solution
-
-Racer Helper generates a driver’s **“best version”** on a specific Trackmania map and outputs:
-- a **realistic achievable lap time** (target),
-- a **personalized ghost driver**,
-- **segment-level guidance** on braking / turning / risk.
-
-**Core insight:** optimal control should be customized to what the human driver can actually execute, not an ideal robot driver.
-
----
-
-## 4) Method Overview
-
-### Step 1 — Train RL under driver-conditioned noise
-A reinforcement learning (RL) agent is trained in simulation while injecting **driver-specific execution noise** into actions.  
-This forces the agent to learn the **fastest human-achievable policy** for that driver, rather than an unrealistically perfect policy.
-
-### Step 2 — Output achievable time + personalized ghost
-The system returns:
-- a realistic lap target, and
-- a ghost replay representing the driver’s best possible version on that map.
-
-**Adaptive improvement loop:** as the driver improves and reaches the target, the system produces a faster target and a refined line based on the driver’s updated characteristics.
-
----
-
-## 5) Baseline Strategy and ML Approach
-
-### Non-AI Baseline (Mandatory)
-A traditional deterministic racing-line heuristic:
-- **Outside–Inside–Outside** cornering philosophy (classical racing line),
-- optional simple braking-point rules based on track geometry/curvature.
-
-This baseline provides a clear non-ML comparison for:
-- line shape, and
-- lap timing.
-
-### ML Approach
-- **Model family:** Reinforcement Learning (RL), conditioned on driving style and risk mode.
-
-**Why RL is appropriate (beyond accuracy):**
-- driving is a sequential control problem with long-term consequences,
-- locally good actions can harm later corners (long-horizon trade-off),
-- RL can optimize lap time while respecting action constraints and driver-specific execution limits.
-
----
-
-## 6) Evaluation Plan
-
-### Main comparisons
-1. Non-AI baseline (heuristic line) vs RL-based personalized line.
-2. Driver’s current laps vs personalized ghost “best version.”
-3. Driver’s old line vs best-fitting personalized line, including realistic time improvement.
-
----
-
-## 7) Deployment Plan
-- Training runs on rented GPUs (cloud).
-- Execution and visualization are performed locally.
-
----
-
-## 8) Assumptions and Limitations
-
-### Assumptions (project scope)
-- Trackmania is treated as the operating environment / ground truth for this project.
-- No weather variation, tire degradation, fuel limits, or random mechanical failures.
-
-### Limitations
-- retraining or adaptation is required for each track,
-- the current system is limited to Trackmania due to tooling/interface dependency.
-
----
-
-## 9) Responsible ML
-
-- **Explainability / interpretability:** segment-level feedback (where time is lost and why).
-- **Robustness:** performance comparison across different risk modes and driving styles.
-- **Privacy / data leakage:** careful handling of driver telemetry and stored runs.
-
----
-
----
-
-## 10) Driver Braking Aggression Conditioning
-
-The system conditions the RL agent on a **braking aggression** scalar `α ∈ [0, 1]` representing the target driver's characteristic brake usage rate.
-
-### How it works
-
-| Component | Mechanism |
+| Document | Description |
 |---|---|
-| **State input** | `α` is appended to the float feature vector (index 184). The network produces different Q-values for the same physical state depending on `α` — a Universal Value Function Approximator (UVFA) architecture. |
-| **Reward signal** | A **Brier-score penalty** is added at each step: `r = coeff × (brake_t − α)²`. The Brier score is the unique *proper scoring rule* for binary events — its expectation is minimised exactly when the agent's empirical brake frequency equals `α`. |
-| **Loss function** | The IQN quantile Huber loss is unchanged. The penalty flows through the Bellman targets: high-aggression profiles get higher target Q-values for brake actions; low-aggression profiles penalise unnecessary braking. |
+| [Linesight Technical Reference](./docs/linesight-technical.md) | Deep-dive into the base RL system: IQN algorithm, neural network architecture, mini-race logic, game interaction layer, hyperparameters (sections 1–22) |
+| [RacerHelper Extensions](./docs/racerhelper-extensions.md) | What we added: human-likeness penalties, braking aggression conditioning, risk tolerance conditioning — with full reward design rationale (sections 23–25) |
+| [run_services.md](./run_services.md) | Step-by-step guide for running the services locally or via Docker |
 
-### Configuration
+---
 
-In `config_files/config.py`:
-```python
-braking_aggression = 0.3          # target driver braking frequency [0, 1]
-humanlike_braking_aggression_reward_schedule = [(0, -0.05)]
+# Running the Services
+
+## Architecture
+
+```
+Browser
+  │
+  └─► Service 1  :8001  (UI + API gateway)
+        │
+        └─► Service 2  :8002  (driver profile extraction)
+        │
+        └─► Service 3  :8003  (replay generation — not yet implemented)
 ```
 
-See §24 of the linesight README for the full mathematical derivation.
+Service 1 is the only public-facing service. The browser never talks to Service 2 or 3 directly — Service 1 proxies everything.
 
 ---
 
+## Assumptions
+
+- **Docker Desktop** is installed and running (for the Docker path).
+- **Python 3.11+** is available (for the local path).
+- The `linesight/` folder is present at the repo root — Service 2 copies `linesight/scripts/extract_driver_profile.py` into its container at build time.
+- `pygbx==0.3`, `numpy`, and `scipy` are installable in the Service 2 environment. `pygbx` is the Trackmania replay parser; without it Service 2 will start but every upload will fail.
+
 ---
 
-## 11) Oversteer / Understeer Style Conditioning
+## Option A — Docker Compose (recommended)
 
-The system conditions the RL agent on an **oversteer/understeer score** `s ∈ [−5, 5]` representing the target driver's characteristic cornering style. Negative values describe an understeer-preferring driver (car pushes wide, front washes out); positive values describe an oversteer-preferring driver (rear steps out, countersteer corrections).
+```powershell
+# 1. From the repo root
+cd RacerHelper-DriverConditionedRL
 
-### Signal Construction
+# 2. Edit .env if needed (defaults are fine for local Docker)
+#    See "Environment variables" section below.
 
-Two mutually exclusive per-step signals are derived from the car's velocity state:
+# 3. Build and start both services
+docker compose up --build
 
-| Signal | Condition | Value |
+# 4. Open the UI
+start http://localhost:8001
+```
+
+To stop:
+```powershell
+docker compose down
+```
+
+To rebuild a single service after a code change:
+```powershell
+docker compose up --build service2
+```
+
+---
+
+## Option B — Local (no Docker)
+
+Run each service in its own terminal. Service 2 must start first.
+
+### Terminal 1 — Service 2
+
+```powershell
+cd services\service2
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --port 8002 --reload
+```
+
+### Terminal 2 — Service 1
+
+```powershell
+cd services\service1\backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --port 8001 --reload
+```
+
+Then open `http://localhost:8001`.
+
+> **Important:** When running locally, `SERVICE2_URL` must point to `localhost`, not the Docker service name. Either set it in your shell or edit `.env`:
+> ```
+> SERVICE2_URL=http://localhost:8002
+> SERVICE3_URL=http://localhost:8003
+> ```
+
+---
+
+## Environment variables
+
+All variables live in `.env` at the repo root. Docker Compose reads this file automatically.
+
+| Variable | Default (Docker) | Description |
 |---|---|---|
-| **Oversteer** | lateral slip ratio `\|v_lat\| / \|v_fwd\|` is high | `clip(slip / 0.3, 0, 1) → [0, 1]` |
-| **Understeer** | steering pressed AND slip ratio `< 0.04` | `1.0` (binary flag) |
-
-These are combined into a single signed signal:
-
-```
-o_signal = clip(oversteer_component − understeer_component, −1, 1)
-```
-
-- `o = +1`: full oversteer (lateral slip saturated)
-- `o = −1`: full understeer (steering applied, near-zero lateral response)
-- `o =  0`: neutral tracking
-
-The signal is suppressed below 10 m/s to avoid low-speed noise.
-
-### Reward
-
-```
-r = coeff × (s / 5) × o_signal
-```
-
-The reward is **positive when the agent's cornering style aligns with the driver's score** and negative when misaligned:
-
-| Score | Behavior | Reward |
-|---|---|---|
-| `s > 0` (oversteer driver) | agent oversteers (`o > 0`) | positive |
-| `s < 0` (understeer driver) | agent understeers (`o < 0`) | positive |
-| any | misaligned style | negative |
-| `s = 0` | disabled | 0 |
-
-### Configuration
-
-In `config_files/config.py`:
-```python
-oversteer_understeer_score = 0.0   # [-5, 5]; 0 = disabled
-humanlike_oversteer_understeer_reward_schedule = [(0, 0.05)]
-```
-
-Slip thresholds can be tuned in `trackmania_rl/buffer_management.py`:
-```python
-_OVERSTEER_SLIP_SAT  = 0.3   # |v_lat|/|v_fwd| at which oversteer signal saturates
-_UNDERSTEER_SLIP_MAX = 0.04  # |v_lat|/|v_fwd| below which understeer fires when steering
-```
+| `SERVICE1_PORT` | `8001` | Host port for Service 1 |
+| `SERVICE2_PORT` | `8002` | Host port for Service 2 |
+| `SERVICE3_PORT` | `8003` | Host port for Service 3 (reserved) |
+| `SERVICE2_URL` | `http://service2:8002` | Where Service 1 calls Service 2. Use `http://localhost:8002` for local dev. |
+| `SERVICE3_URL` | `http://service3:8003` | Where Service 1 will call Service 3. Use `http://localhost:8003` for local dev. |
+| `LINESIGHT_SCRIPTS_PATH` | `/app/scripts` | Path to `extract_driver_profile.py` inside the Service 2 container. Do not change unless you move the file. |
+| `SERVICE1_CORS_ORIGINS` | `*` | Comma-separated allowed origins for Service 1. Lock down to your domain in production. |
+| `SERVICE2_CORS_ORIGINS` | `http://localhost:8001` | Comma-separated allowed origins for Service 2. Browsers never call Service 2 directly, so this is defence-in-depth only. |
 
 ---
 
----
+## Adding Service 3
 
-## 12) Brake Tap Penalty
+When Service 3 is ready:
 
-A brake press held for fewer than **3 consecutive steps (150 ms)** is treated as a micro-tap — no human driver commits to braking that briefly in a racing context. The violation is detected in a pre-pass over the rollout and a fixed penalty is applied at the release step.
+1. Create `services/service3/Dockerfile` and its code.
+2. Uncomment the `service3` block in `docker-compose.yml`.
+3. Service 1 already reads `SERVICE3_URL` from the environment — no code changes needed there.
+4. Implement the actual HTTP call in `services/service1/backend/main.py` inside the `generate` endpoint (currently a stub).
 
-```python
-humanlike_brake_tap_penalty_schedule = [(0, -0.05)]
-```
 
----
-
-## 13) Steering & Accelerator Tap Penalties
-
-Similar to the brake tap penalty but applied independently to **left/right steering** and **throttle** inputs. A press held fewer than 3 steps (150 ms) before release is penalised at the release step.
-
-Left and right holds are tracked independently so a direct L→R transition (no neutral frame between) correctly tags the left release at the step right begins. The steer tap penalty is orthogonal to the steering oscillation penalty (§ oscillation): oscillation catches rapid direction alternation by frequency; tap catches any individual press that is too short regardless of direction.
-
-```python
-humanlike_steer_tap_penalty_schedule = [(0, -0.05)]
-humanlike_accel_tap_penalty_schedule = [(0, -0.05)]
-```
-
----
-
-## 14) Corner Entry Speed Conditioning
-
-The system conditions the driver profile on **corner entry speed** through a sparse reward term, using a target ratio `ρ ∈ [0, 1]` where:
-
-```
-ρ = median corner-entry speed / peak speed
-```
-
-### How it works
-
-| Component | Mechanism |
-|---|---|
-| **Target profile** | `corner_entry_speed_ratio` represents how much speed the target driver carries into corners. Higher values mean later braking / faster corner entry. |
-| **Corner detection** | A corner entry is detected when the curvature proxy `κ = \|yaw_rate_y\| / max(\|v_fwd\|, 1.0)` crosses the `0.010 1/m` threshold. |
-| **Reward signal** | At each detected entry, a penalty is applied: `r = coeff × (entry_ratio − ρ)²`. Since `coeff` is negative, mismatched entry speed is penalized. |
-
-This conditioning is applied during buffer construction; it does not add a new network input.
-
-### Configuration
-
-In `config_files/config.py`:
-```python
-corner_entry_speed_ratio = 0.84
-humanlike_corner_entry_speed_reward_schedule = [(0, -0.2)]
-```
-
-The ratio can be copied from `extract_driver_profile.py` after running it on a driver replay.
-
----
-
-## 15) Extract Driver Profile Script
-
-`linesight/scripts/extract_driver_profile.py` converts a Trackmania `.Replay.Gbx` into the driver-style values used by the conditioning system.
-
-Run from `linesight/`:
-```bash
-PYTHONPATH=. python scripts/extract_driver_profile.py <replay.Replay.Gbx>
-```
-
-### Outputs
-
-| Output | Purpose |
-|---|---|
-| `braking_aggression` | Target brake usage profile in `[0, 1]` |
-| `oversteer_understeer_score` | Cornering style score in `[-5, 5]` |
-| `corner_entry_speed_level` | Coarse entry-speed label: `low`, `medium`, or `high` |
-| `corner_entry_speed_ratio` | Numeric target used by the corner-entry-speed reward |
-
-The script also prints the config values to paste into `config_files/config.py` before training or evaluating a personalized driver profile.
-
----
 
 ## Team
 - Jad Al Lakkis  
