@@ -1,4 +1,4 @@
-# RacerHelper — Extensions & Driver Conditioning (Sections 23–25)
+# RacerHelper — Extensions & Driver Conditioning (Sections 23–29)
 
 > What we added on top of Linesight to produce a **personalized, human-achievable ghost** for a specific driver.  
 > Base model: [Linesight](https://github.com/linesight-rl/linesight) — see [linesight-technical.md](./linesight-technical.md) for core architecture.
@@ -11,37 +11,27 @@
     - [Reward Scale Reference](#reward-scale-reference)
     - [Penalty 1 — Steering Oscillation](#penalty-1--steering-oscillation)
     - [Penalty 2 — Brake Tap](#penalty-2--brake-tap)
-    - [Penalty 3 — Neo Slide at Low Speed](#penalty-3--neo-slide-at-low-speed)
+    - [Penalty 3 — Steering Tap](#penalty-3--steering-tap)
+    - [Penalty 4 — Accelerator Tap](#penalty-4--accelerator-tap)
+    - [Penalty 5 — Neo Slide at Low Speed](#penalty-5--neo-slide-at-low-speed)
+    - [Interaction with Existing Rewards](#interaction-with-existing-rewards)
+    - [Tuning](#tuning)
 24. [Braking Aggression Conditioning](#24-braking-aggression-conditioning)
-    - [State Conditioning (UVFA)](#part-1--state-conditioning-uvfa)
-    - [Brier-Score Reward Penalty](#part-2--brier-score-reward-penalty)
 25. [Risk Tolerance Conditioning](#25-risk-tolerance-conditioning)
-    - [State Conditioning](#part-1--state-conditioning)
-    - [CVaR Quantile Bias](#part-2--cvar-quantile-bias)
-    - [VCP-Distance Brier-Score Reward](#part-3--vcp-distance-brier-score-reward)
-
----
-
-## Figures & Architecture Diagrams
-
-> **Placeholder — figures to be added here.**
-
-Planned additions:
-
-- [ ] Full system architecture diagram (Service 1 → Service 2 → Linesight pipeline)
-- [ ] Driver profile conditioning diagram (braking aggression + risk tolerance inputs)
-- [ ] Training reward breakdown plot (base reward vs. style penalties over training)
-- [ ] IQN quantile distribution plots from trained runs
-- [ ] CVaR quantile range visualization for different risk_tolerance values
-- [ ] Lap time comparison: baseline Linesight vs. driver-conditioned RacerHelper
+    - [Part 1 — CVaR Quantile Bias](#part-1--cvar-quantile-bias)
+    - [Part 2 — VCP-Distance Brier-Score Reward](#part-2--vcp-distance-brier-score-reward)
+26. [Oversteer / Understeer Conditioning](#26-oversteer--understeer-conditioning)
+27. [Corner Entry Speed Conditioning](#27-corner-entry-speed-conditioning)
+28. [Extract Driver Profile Script](#28-extract-driver-profile-script)
+29. [Total Reward Summary](#29-total-reward-summary)
 
 ---
 
 ## 23. Human-Likeness Penalties
 
-**Files:** `trackmania_rl/buffer_management.py`, `config_files/config.py`, `trackmania_rl/multiprocess/learner_process.py`
+**Files:** `trackmania_rl/buffer_management.py`, `config_files/config.py`
 
-These three penalty terms discourage behaviors that are physically possible in the simulator but impossible or unnatural for a human driver. The goal is not to slow the agent down — it is to constrain the **policy space** to solutions a human could realistically execute, which is a prerequisite for using the agent as a driver assistance or coaching tool.
+Five penalty terms discourage behaviors that are physically possible in the simulator but impossible or unnatural for a human driver. The goal is not to slow the agent down — it is to constrain the **policy space** to solutions a human could realistically execute, which is a prerequisite for using the agent as a coaching tool.
 
 ---
 
@@ -55,7 +45,7 @@ At ~100 km/h:
 | Progress reward (~1.4 m at 100 km/h) | **+0.014** |
 | Net reward at racing speed | **≈ −0.032 to −0.046** |
 
-All three penalties use coefficient **−0.05** — roughly 1.0–1.5× the magnitude of one step's net reward. Large enough to shape behavior, small enough not to destroy the primary signal.
+All five penalties use coefficient **−0.05** — roughly 1–1.5× the magnitude of one step's net reward. Large enough to shape behavior, small enough not to destroy the primary signal.
 
 ---
 
@@ -100,11 +90,31 @@ The agent strongly associates the entire short-brake sequence with the penalty, 
 
 ---
 
-### Penalty 3 — Neo Slide at Low Speed
+### Penalty 3 — Steering Tap
+
+**Config key:** `humanlike_steer_tap_penalty_schedule` (default `[(0, -0.05)]`)
+
+**What it penalizes:** Left or right presses held fewer than **3 consecutive steps (150 ms)**. Mirrors the brake tap logic applied to steering inputs.
+
+**Detection:** Left and right holds are tracked independently so a direct L→R transition (no neutral frame) correctly tags the left release at the step right begins. This penalty is orthogonal to the oscillation penalty: oscillation catches rapid direction alternation by frequency; tap catches any individual press that is too short regardless of direction.
+
+---
+
+### Penalty 4 — Accelerator Tap
+
+**Config key:** `humanlike_accel_tap_penalty_schedule` (default `[(0, -0.05)]`)
+
+**What it penalizes:** Throttle presses held fewer than **3 consecutive steps (150 ms)**. No human driver blips the gas that briefly in a racing context.
+
+**Detection:** Same forward-scan pattern as the brake tap pre-pass.
+
+---
+
+### Penalty 5 — Neo Slide at Low Speed
 
 **Config key:** `humanlike_low_speed_slide_penalty_schedule` (default `[(0, -0.05)]`)
 
-**What it penalizes:** Any wheel in a sliding state while forward speed is below **10 m/s (36 km/h)**. At high speed, sliding is a legitimate technique (speedslide). At low speed, it is an AI physics exploit — spin-outs, awkward wall recoveries, or start-of-race exploits.
+**What it penalizes:** Any wheel in a sliding state while forward speed is below **10 m/s (36 km/h)**. At high speed, sliding is a legitimate technique (speedslide). At low speed, it is an AI physics exploit — spin-outs, awkward wall recoveries, or start-of-race exploits that no human driver produces intentionally.
 
 **Detection:** Per-step check using `state_float[21:25]` (sliding flags) and `state_float[58]` (forward speed):
 
@@ -113,7 +123,7 @@ if any(is_sliding) and abs(speed_forward) < 10.0:
     reward_into[i] += humanlike_low_speed_slide_penalty
 ```
 
-This is a **per-step penalty** — 10 steps of low-speed sliding = 10 × −0.05 = −0.50, roughly equivalent to losing 8 seconds of race time.
+This is a **per-step penalty** — 10 steps of low-speed sliding = 10 × −0.05 = −0.50, roughly equivalent to about 8 time-penalty steps (~0.4 seconds of race time).
 
 ---
 
@@ -121,27 +131,33 @@ This is a **per-step penalty** — 10 steps of low-speed sliding = 10 × −0.05
 
 | Reward / Penalty | What it targets | Interaction |
 |---|---|---|
-| `engineered_neoslide_reward` | Lateral speed ≥ 2 m/s | No conflict — speed threshold (36 km/h) separates them |
+| `engineered_neoslide_reward` | Lateral speed ≥ 2 m/s AND forward speed ≥ 10 m/s | No conflict — the forward-speed guard was added specifically to prevent overlap with the low-speed penalty |
 | `engineered_speedslide_reward` | Perfect high-speed slides | Entirely orthogonal to low-speed penalty |
 | `humanlike_low_speed_slide_penalty` | Sliding + speed < 36 km/h | Fills the gap left by the above two |
 | `humanlike_oscillation_penalty` | Input frequency | No overlap with any existing reward |
 | `humanlike_brake_tap_penalty` | Input duration | No overlap with any existing reward |
+| `humanlike_steer_tap_penalty` | Input duration | Orthogonal to oscillation penalty (duration vs. frequency) |
+| `humanlike_accel_tap_penalty` | Input duration | No overlap with any existing reward |
 
 ### Tuning
 
-All three are linear schedules `[(step, coefficient), ...]`.
+All five are linear schedules `[(step, coefficient), ...]`.
 
 **Enable immediately (current default):**
 ```python
-humanlike_oscillation_penalty_schedule    = [(0, -0.05)]
-humanlike_brake_tap_penalty_schedule      = [(0, -0.05)]
+humanlike_oscillation_penalty_schedule     = [(0, -0.05)]
+humanlike_brake_tap_penalty_schedule       = [(0, -0.05)]
+humanlike_steer_tap_penalty_schedule       = [(0, -0.05)]
+humanlike_accel_tap_penalty_schedule       = [(0, -0.05)]
 humanlike_low_speed_slide_penalty_schedule = [(0, -0.05)]
 ```
 
-**Ramp in after initial convergence (recommended from scratch):**
+**Ramp in after initial convergence (recommended when training from scratch):**
 ```python
-humanlike_oscillation_penalty_schedule    = [(0, 0), (500_000, -0.05)]
-humanlike_brake_tap_penalty_schedule      = [(0, 0), (500_000, -0.05)]
+humanlike_oscillation_penalty_schedule     = [(0, 0), (500_000, -0.05)]
+humanlike_brake_tap_penalty_schedule       = [(0, 0), (500_000, -0.05)]
+humanlike_steer_tap_penalty_schedule       = [(0, 0), (500_000, -0.05)]
+humanlike_accel_tap_penalty_schedule       = [(0, 0), (500_000, -0.05)]
 humanlike_low_speed_slide_penalty_schedule = [(0, 0), (500_000, -0.05)]
 ```
 
@@ -149,61 +165,42 @@ humanlike_low_speed_slide_penalty_schedule = [(0, 0), (500_000, -0.05)]
 
 ## 24. Braking Aggression Conditioning
 
-**Files:** `config_files/config.py`, `trackmania_rl/tmi_interaction/game_instance_manager.py`, `trackmania_rl/buffer_management.py`
+**Files:** `config_files/config.py`, `trackmania_rl/buffer_management.py`
 
 ### Motivation
 
-One of the most driver-distinctive behaviors is braking aggression: aggressive drivers brake late and hard; smooth drivers coast and brake gently. A single trained model needs to produce different driving styles by receiving the target profile as a conditioning input.
+One of the most driver-distinctive behaviors is braking aggression: aggressive drivers brake late and hard; smooth drivers coast and brake gently. The system shapes the agent's braking frequency toward a target value `braking_aggression ∈ [0, 1]` via a Brier-score reward penalty.
 
----
+### Brier-Score Reward Penalty
 
-### Part 1 — State Conditioning (UVFA)
-
-`braking_aggression` is appended to the float feature vector as index **184**, a scalar in `[0, 1]`:
-
-| Value | Interpretation |
-|---|---|
-| 0.0 | Never brakes — pure coasting driver |
-| 0.3 | Brakes sparingly, mostly on fast corners (default) |
-| 0.5 | Moderate — brakes at most corners |
-| 1.0 | Brakes maximally at every braking opportunity |
-
-This is the **Universal Value Function Approximator (UVFA)** pattern (Schaul et al., 2015). The network learns different Q-value distributions for the same physical state depending on the conditioning variable.
-
-**Normalization:** Mean `0.5`, Std `0.3` (covers realistic driver range with ≈1.7σ from each extreme).
-
----
-
-### Part 2 — Brier-Score Reward Penalty
-
-The **Brier score** is a proper scoring rule for binary events:
+The **Brier score** is the unique proper scoring rule for binary events:
 
 ```
 L_Brier(p, y) = (y − p)²
 ```
 
-Expected value is minimized if and only if the predicted probability `p` equals the true event probability — i.e., the agent is incentivized to produce the correct braking frequency.
+Its expectation over the policy is minimized if and only if the agent's empirical brake frequency equals `braking_aggression`. This makes it the correct loss for driving the distribution of brake actions toward a target frequency.
 
 **Per-step reward formula:**
 ```
 r_brake(i) = coeff × (brake(action_i) − braking_aggression)²
 ```
 
-| Scenario | Penalty |
-|---|---|
-| `braking_aggression=1.0`, agent brakes | `coeff × (1−1)² = 0` |
-| `braking_aggression=1.0`, agent does not brake | `coeff × (0−1)² = coeff` |
-| `braking_aggression=0.5`, either outcome | `coeff × (0.5)² = 0.25 × coeff` |
-| `braking_aggression=0.0`, agent brakes | `coeff × (1−0)² = coeff` |
+| `braking_aggression` | Agent action | Penalty |
+|---|---|---|
+| 1.0 | brakes | `coeff × (1−1)² = 0` |
+| 1.0 | does not brake | `coeff × (0−1)² = coeff` |
+| 0.5 | either | `coeff × (0.5)² = 0.25 × coeff` |
+| 0.0 | brakes | `coeff × (1−0)² = coeff` |
 
 With `coeff = −0.05`, the maximum penalty per step is `−0.05`.
 
-**Why Brier score over cross-entropy?** The Brier score is bounded `[0, 1]` with bounded gradients. Cross-entropy diverges as predicted probability → 0 or 1, which would produce unbounded rewards and destabilize IQN training.
+**Why Brier score over cross-entropy?** The Brier score is bounded `[0, 1]` with bounded gradients. Cross-entropy diverges as the predicted probability → 0 or 1, which would produce unbounded rewards and destabilize IQN training.
 
 ### Configuration
 
 ```python
-braking_aggression = 0.3
+braking_aggression = 0.8  # [0, 1]; use extract_driver_profile.py to derive from a replay
 humanlike_braking_aggression_reward_schedule = [(0, -0.05)]
 ```
 
@@ -221,31 +218,17 @@ braking_aggression = 0.7
 
 ## 25. Risk Tolerance Conditioning
 
-**Files:** `config_files/config.py`, `trackmania_rl/tmi_interaction/game_instance_manager.py`, `trackmania_rl/buffer_management.py`
+**Files:** `config_files/config.py`, `trackmania_rl/agents/iqn.py`, `trackmania_rl/buffer_management.py`
 
 ### Motivation
 
-After braking aggression, another driver-style dimension is **risk tolerance**: conservative drivers keep safer margins while aggressive drivers take tighter cuts and operate closer to the limit. Risk is defined operationally as the car's deviation from the VCP reference line.
+Risk tolerance captures how aggressively a driver cuts corners and how far they deviate from the centerline. Conservative drivers follow the reference line closely; aggressive drivers take tight apex cuts. The variable `risk_tolerance ∈ [0, 1]` conditions the agent through two complementary mechanisms.
 
 ---
 
-### Part 1 — State Conditioning
+### Part 1 — CVaR Quantile Bias
 
-`risk_tolerance` is appended to the float feature vector as index **185**, a scalar in `[0, 1]`:
-
-| Value | Interpretation |
-|---|---|
-| 0.0 | Maximally conservative — stays close to the reference line |
-| 0.5 | Neutral / balanced |
-| 1.0 | Maximally aggressive — larger deviation from the reference line |
-
-**Normalization:** Same mechanism as `braking_aggression` — part of the float input normalization system in `state_normalization.py`.
-
----
-
-### Part 2 — CVaR Quantile Bias
-
-Risk tolerance also controls which part of the return distribution is used at inference time. IQN samples quantiles from a risk-conditioned range:
+At inference time, IQN samples quantiles from a risk-conditioned range:
 
 ```python
 τ ~ U[0.5 × risk_tolerance, 0.5 × risk_tolerance + 0.5]
@@ -257,13 +240,13 @@ Risk tolerance also controls which part of the return distribution is used at in
 | 0.5 | τ ~ U[0.25, 0.75] | Neutral / balanced |
 | 1.0 | τ ~ U[0.50, 1.00] | Optimistic / risk-seeking — values upside potential |
 
-A low `risk_tolerance` makes the agent evaluate actions using the lower part of the return distribution (pessimistic). A high value uses the upper part (optimistic). The same trained model changes its decision style without requiring a separate model per profile.
+This is implemented in `trackmania_rl/agents/iqn.py → Inferer.infer_network()`. The same trained model changes its decision style at inference without retraining.
 
 ---
 
-### Part 3 — VCP-Distance Brier-Score Reward
+### Part 2 — VCP-Distance Brier-Score Reward
 
-Risk is defined as the normalized distance to the current VCP:
+Risk is operationalized as the car's normalized 3D distance from the current VCP:
 
 ```python
 risk_proxy = min(||state_float[62:65]|| / risk_tolerance_vcp_dist_max, 1.0)
@@ -271,62 +254,210 @@ risk_proxy = min(||state_float[62:65]|| / risk_tolerance_vcp_dist_max, 1.0)
 
 | `risk_proxy` | Interpretation |
 |---|---|
-| ≈ 0 | Car is close to the reference line |
-| ≈ 1 | Car is near `risk_tolerance_vcp_dist_max` metres (default: 15 m) away |
+| ≈ 0 | Car is on the reference line |
+| ≈ 1 | Car is `risk_tolerance_vcp_dist_max` metres away (default: 15 m) |
 
 **Reward formula:**
 ```python
 r_risk(i) = coeff × (risk_proxy − risk_tolerance)²
 ```
 
-The penalty is minimized when `risk_proxy ≈ risk_tolerance`:
+The Brier score drives `risk_proxy → risk_tolerance` at equilibrium:
 
-| `risk_tolerance` | Minimum penalty occurs at | Interpretation |
+| `risk_tolerance` | Minimum penalty at | Interpretation |
 |---|---|---|
 | 0.0 | `risk_proxy ≈ 0.0` | Stay close to the reference line |
-| 0.5 | `risk_proxy ≈ 0.5` | ~7.5 m deviation |
-| 1.0 | `risk_proxy ≈ 1.0` | ~15 m deviation |
+| 0.5 | `risk_proxy ≈ 0.5` | ~7.5 m lateral deviation |
+| 1.0 | `risk_proxy ≈ 1.0` | ~15 m lateral deviation |
 
 ### Configuration
 
 ```python
-risk_tolerance = 0.5
+risk_tolerance = 0.2  # [0, 1]; 0 = conservative, 1 = aggressive
 humanlike_risk_tolerance_reward_schedule = [(0, -0.05)]
-risk_tolerance_vcp_dist_max = 15.0
+risk_tolerance_vcp_dist_max = 15.0  # metres; normalisation denominator for VCP distance
 ```
 
-To ramp in after convergence:
-```python
-humanlike_risk_tolerance_reward_schedule = [(0, 0), (500_000, -0.05)]
-```
-
-To change risk profile mid-run (edit `config_copy.py`):
+To change risk profile mid-run:
 ```python
 risk_tolerance = 0.8
 ```
 
 ---
 
-### Relationship Between All Style Variables
+## 26. Oversteer / Understeer Conditioning
 
-| Variable | What it controls | Mechanism |
+**Files:** `config_files/config.py`, `trackmania_rl/buffer_management.py`
+
+### Motivation
+
+Cornering style — the degree to which a driver induces oversteer (rear steps out) vs. understeer (front washes out) — is a distinctive driver characteristic. The variable `oversteer_understeer_score ∈ [−5, 5]` conditions the agent via a per-step alignment reward. Setting it to `0` disables this term entirely.
+
+### Signal Construction
+
+Two mutually exclusive per-step signals are derived from the car's velocity state:
+
+| Signal | Condition | Value |
 |---|---|---|
-| `braking_aggression` | How often the agent brakes | State conditioning + Brier-score penalty on brake frequency |
-| `risk_tolerance` | How far from the reference line the agent drives | State conditioning + CVaR quantile bias + VCP-distance Brier penalty |
-| Human-likeness penalties | Prevents inhuman simulator exploits | Reward penalties on oscillation, tap-braking, low-speed slides |
+| **Oversteer** | `\|v_lat\| / \|v_fwd\|` is high | `clip(slip / 0.3, 0, 1) → [0, 1]` |
+| **Understeer** | steering pressed AND slip ratio `< 0.04` | `1.0` (binary flag) |
 
-The three are fully orthogonal and can be tuned independently. Together they define a driver profile that constrains the agent to a human-achievable racing style.
+Combined into a single signed signal:
+```
+o_signal = clip(oversteer_component − understeer_component, −1, 1)
+```
+
+- `o = +1`: full oversteer (lateral slip saturated)
+- `o = −1`: full understeer (steering applied, near-zero lateral response)
+- `o =  0`: neutral tracking
+
+Suppressed below 10 m/s to avoid low-speed noise.
+
+### Reward
+
+```
+r = coeff × (score / 5) × o_signal
+```
+
+The reward is **positive when the agent's cornering style aligns with the score**:
+
+| Score | Behavior | Reward |
+|---|---|---|
+| `s > 0` (oversteer driver) | agent oversteers (`o > 0`) | positive |
+| `s < 0` (understeer driver) | agent understeers (`o < 0`) | positive |
+| any | misaligned style | negative |
+| `s = 0` | disabled | 0 |
+
+Note: the config coefficient is **positive** (`+0.05`). The sign of the reward follows from `(score/5) × o_signal`.
+
+### Configuration
+
+```python
+oversteer_understeer_score = 0.0  # [-5, 5]; 0 = disabled
+humanlike_oversteer_understeer_reward_schedule = [(0, 0.05)]
+```
+
+Slip thresholds in `trackmania_rl/buffer_management.py`:
+```python
+_OVERSTEER_SLIP_SAT  = 0.3   # |v_lat|/|v_fwd| at which oversteer signal saturates
+_UNDERSTEER_SLIP_MAX = 0.04  # |v_lat|/|v_fwd| below which understeer fires when steering
+```
 
 ---
 
-### Total Reward Summary
+## 27. Corner Entry Speed Conditioning
+
+**Files:** `config_files/config.py`, `trackmania_rl/buffer_management.py`
+
+### Motivation
+
+How much speed a driver carries into a corner is a key style dimension. Late brakers enter fast (`ratio ≈ 0.84`); conservative drivers scrub speed early (`ratio ≈ 0.3`). The variable `corner_entry_speed_ratio ∈ [0, 1]` = median corner-entry speed / peak lap speed shapes agent behavior via a sparse Brier-score penalty.
+
+### Corner Detection
+
+A corner entry is detected when the curvature proxy κ crosses a rising edge above `CORNER_CURV_THRESH = 0.010 1/m`:
+
+```
+κ = |angular_velocity_y| / max(|v_fwd|, 1.0)   (state_float indices 54, 58)
+```
+
+A minimum gap of 10 steps (500 ms) is enforced between detections. This mirrors the detection logic in `scripts/extract_driver_profile.py` so the profiler and the reward function measure the same corners.
+
+### Reward
+
+At each detected corner entry, a Brier-score penalty fires:
+
+```
+r = coeff × (entry_ratio − corner_entry_speed_ratio)²
+```
+
+where `entry_ratio = speed_at_entry / rollout_peak_speed`.
+
+With `coeff = −0.2`, the worst-case per-entry cost is `−0.2` — comparable to ~3 steps of the time penalty. There are typically 10–30 corner entries per lap, so the total influence is meaningful but not dominant.
+
+### Configuration
 
 ```python
-r_total = r_base                       # time penalty + VCP progress
-        + r_engineered                 # optional: speedslide, neoslide, kamikaze
-        + r_humanlike_oscillation      # steering oscillation penalty
-        + r_humanlike_brake_tap        # brake tap duration penalty
-        + r_humanlike_low_speed_slide  # low-speed slide penalty
-        + r_brake_aggression           # Brier-score brake frequency penalty
-        + r_risk_tolerance             # Brier-score VCP-distance penalty
+corner_entry_speed_ratio = 0.84  # [0, 1]; use extract_driver_profile.py to derive from a replay
+humanlike_corner_entry_speed_reward_schedule = [(0, -0.2)]
 ```
+
+---
+
+## 28. Extract Driver Profile Script
+
+**File:** `linesight/scripts/extract_driver_profile.py`
+
+Converts a Trackmania `.Replay.Gbx` into the driver-style values used by the conditioning system.
+
+```bash
+cd linesight/
+PYTHONPATH=. python scripts/extract_driver_profile.py <replay.Replay.Gbx>
+```
+
+### Outputs
+
+| Output | Config key | Range | Description |
+|---|---|---|---|
+| `braking_aggression` | `braking_aggression` | `[0, 1]` | Context-aware brake frequency (conditioned on corner-approach context) |
+| `oversteer_understeer_score` | `oversteer_understeer_score` | `[-5, 5]` | Mean o_signal × 5 across the lap |
+| `corner_entry_speed_level` | — | `low / medium / high` | Human-readable label (`high` > 0.60, `medium` 0.35–0.60, `low` < 0.35) |
+| `corner_entry_speed_ratio` | `corner_entry_speed_ratio` | `[0, 1]` | Numeric ratio to paste into config |
+
+The script prints a ready-to-paste config block:
+
+```
+═══════════════════════════════════════════════════════
+  DRIVER PROFILE
+═══════════════════════════════════════════════════════
+  braking_aggression         = 0.810
+  oversteer_understeer_score = -0.60
+  corner_entry_speed_level   = high
+  corner_entry_speed_ratio   = 0.840
+
+  ── paste into config_files/config.py ──
+  braking_aggression         = 0.81
+  oversteer_understeer_score = -0.6
+  corner_entry_speed_ratio   = 0.84
+```
+
+### How Braking Aggression is Measured
+
+Braking frequency is conditioned on corner-approach context: the denominator counts only samples where the car is above 50 km/h **and** a corner exists within the next 200 m ahead. This avoids penalising a driver for not braking on long straights. Falls back to a speed²-weighted brake fraction on pure-speed tracks with no detectable corners.
+
+### How Oversteer / Understeer is Measured
+
+A Gaussian-smoothed velocity vector (σ = 6 steps / 600 ms) is used as the forward reference, so the perpendicular component of the raw velocity captures genuine lateral slip without circular-reference bias. The signal matches the constants in `buffer_management.py` (`SLIP_SAT = 0.3`, `UNDERSTEER_MAX = 0.04`).
+
+---
+
+## 29. Total Reward Summary
+
+All reward components active during a training step:
+
+```python
+r_total = r_base                        # time penalty + VCP progress
+        + r_engineered                  # optional: speedslide, neoslide, kamikaze, close_to_vcp
+        + r_humanlike_oscillation       # steering oscillation penalty
+        + r_humanlike_brake_tap         # brake tap duration penalty
+        + r_humanlike_steer_tap         # steering tap duration penalty
+        + r_humanlike_accel_tap         # accelerator tap duration penalty
+        + r_humanlike_low_speed_slide   # low-speed slide penalty
+        + r_brake_aggression            # Brier-score brake frequency penalty
+        + r_risk_tolerance              # Brier-score VCP-distance penalty
+        + r_oversteer_understeer        # cornering style alignment reward
+        + r_corner_entry_speed          # Brier-score corner entry speed penalty
+```
+
+CVaR quantile bias is applied at **inference time** (not a reward): `τ ~ U[0.5×risk_tolerance, 0.5×risk_tolerance + 0.5]`.
+
+### Driver Profile Variable Summary
+
+| Variable | Range | Mechanism | Config key |
+|---|---|---|---|
+| `braking_aggression` | `[0, 1]` | Brier-score penalty on brake frequency | `humanlike_braking_aggression_reward_schedule` |
+| `risk_tolerance` | `[0, 1]` | CVaR quantile bias at inference + Brier-score VCP-distance penalty | `humanlike_risk_tolerance_reward_schedule` |
+| `oversteer_understeer_score` | `[-5, 5]` | Per-step alignment reward on slip signal | `humanlike_oversteer_understeer_reward_schedule` |
+| `corner_entry_speed_ratio` | `[0, 1]` | Brier-score penalty on corner entry speed | `humanlike_corner_entry_speed_reward_schedule` |
+
+The four style variables are fully orthogonal and can be tuned independently. The five human-likeness penalties constrain the agent to a human-achievable action space. Together they define a driver profile that is extracted from a replay via `extract_driver_profile.py` and pasted directly into `config_files/config.py`.
